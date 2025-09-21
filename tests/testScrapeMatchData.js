@@ -23,7 +23,6 @@ async function main() {
         // Ask for the action type
         const actionType = await askQuestion('▶ Select action (live/upcoming/completed/all, or detailed): ');
 
-        // --- Branch for scraping a single detailed match ---
         if (actionType.toLowerCase() === 'detailed') {
             const matchUrl = await askQuestion('▶ Enter the full VLR.gg match URL: ');
 
@@ -41,8 +40,6 @@ async function main() {
             } else {
                 console.log('\n❌ Failed to retrieve or parse match data.');
             }
-
-            // --- Branch for scraping a list of matches (original functionality) ---
         } else {
             const maxRecordsInput = await askQuestion('▶ Max records per category (default: 5): ');
             const maxRecords = maxRecordsInput ? parseInt(maxRecordsInput, 10) : 5;
@@ -91,5 +88,4 @@ async function main() {
     }
 }
 
-// Run the main function
 main();

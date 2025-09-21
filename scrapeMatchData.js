@@ -80,7 +80,6 @@ export async function scrapeVlrMatches(options = {}) {
  * @returns {Promise<Object|null>} A promise that resolves to the detailed match data object, or null on failure.
  */
 export async function getVlrMatchDetails(matchUrl) {
-    console.log(`🚀 Fetching detailed data for: ${matchUrl}`);
     try {
         const html = await _fetchHtml(matchUrl);
         const vlrId = matchUrl.split('/')[3];
@@ -315,8 +314,8 @@ async function _parseDetailedMatchData(html, vlrId) {
             if (!playerName) return;
 
             const agentImg = $row.find('.mod-agent img');
-            const agentName = agentImg.attr('title');
-            let agentIconUrl = agentImg.attr('src');
+            const agentName = agentImg.attr('title') || null;
+            let agentIconUrl = agentImg.attr('src') || null;
             if (agentIconUrl && agentIconUrl.startsWith('/')) {
                 agentIconUrl = `https://www.vlr.gg${agentIconUrl}`;
             }

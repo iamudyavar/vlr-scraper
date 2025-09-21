@@ -1,17 +1,8 @@
 import { action, mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { matchSchema, detailedMatchSchema } from "./shared.js";
 import { v } from "convex/values";
 
-// Define the schema for a match
-const matchSchema = v.object({
-    vlrId: v.string(),
-    url: v.string(),
-    status: v.union(v.literal("live"), v.literal("upcoming"), v.literal("completed")),
-    time: v.union(v.string(), v.null()),
-    team1: v.object({ name: v.string(), score: v.number() }),
-    team2: v.object({ name: v.string(), score: v.number() }),
-    event: v.object({ name: v.string(), series: v.string() }),
-});
 
 export const upsertBatch = mutation({
     // This mutation takes an array of matches
@@ -67,5 +58,44 @@ export const upsertMatchesAction = action({
             scrapedMatches: args.scrapedMatches,
         });
         return result;
+    },
+});
+
+/**
+ * Upserts detailed match data and syncs the main matches table.
+ */
+export const upsertMatchDetails = mutation({
+    args: {
+        details: detailedMatchSchema
+    },
+    handler: async (ctx, args) => {
+        const { details } = args;
+
+        // 1. Upsert the detailed data
+        const existingDetails = await ctx.db
+            .query("matchDetails")
+            .withIndex("by_vlr_id", (q) => q.eq("vlrId", details.vlrId))
+            .unique();
+
+        if (!existingDetails) {
+            await ctx.db.insert("matchDetails", details);
+        } else {
+            await ctx.db.patch(existingDetails._id, details);
+        }
+
+        // 2. Sync the main 'matches' table for consistency
+        const mainMatch = await ctx.db
+            .query("matches")
+            .withIndex("by_vlr_id", (q) => q.eq("vlrId", details.vlrId))
+            .unique();
+
+        if (mainMatch) {
+            await ctx.db.patch(mainMatch._id, {
+                status: details.overallStatus,
+                team1: { ...mainMatch.team1, score: details.team1.score },
+                team2: { ...mainMatch.team2, score: details.team2.score },
+            });
+        }
+        return { success: true, vlrId: details.vlrId };
     },
 });
