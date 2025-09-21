@@ -94,6 +94,25 @@ export async function getVlrMatchDetails(matchUrl) {
     }
 }
 
+/**
+ * Scrapes a single page of completed match results from VLR.gg.
+ * @param {number} pageNumber - The page number to scrape (e.g., 1, 2, 3...).
+ * @returns {Promise<Array>} A promise that resolves to an array of match objects from that page.
+ */
+export async function scrapeVlrResultsPage(pageNumber = 1) {
+    const url = `https://www.vlr.gg/matches/results/?page=${pageNumber}`;
+    console.log(`[Scraper] 📄 Scraping results page: ${pageNumber}`);
+    try {
+        // We can reuse the internal _scrapeListPage function.
+        // We set maxResults very high because we want all matches on the page.
+        const matches = await _scrapeListPage(url, 200); // 200 is a safe high number for matches per page
+        return matches.filter(match => match.status === 'completed');
+    } catch (error) {
+        console.error(`❌ Error scraping results page ${pageNumber}:`, error.message);
+        return []; // Return an empty array on failure
+    }
+}
+
 
 // =============================================================================
 // Core Scraper & HTML Fetcher
