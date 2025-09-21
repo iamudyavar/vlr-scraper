@@ -12,6 +12,7 @@ const SCANNER_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const TRACKER_INTERVAL_MS = 30 * 1000; // 30 seconds
 const MAX_RESULTS_PER_CATEGORY = 50;
 const CONVEX_URL = process.env.CONVEX_URL;
+const CONVEX_API_KEY = process.env.CONVEX_API_KEY;
 
 // =============================================================================
 // State Management
@@ -49,7 +50,10 @@ async function runTracker(vlrId, matchUrl) {
             return;
         }
 
-        await client.mutation("matches:upsertMatchDetails", { details });
+        await client.mutation("matches:upsertMatchDetails", {
+            details,
+            apiKey: CONVEX_API_KEY
+        });
         console.log(`[Tracker:${vlrId}] ✅ Synced detailed data to Convex.`);
 
         // If the match is no longer live, the scanner will eventually stop this tracker.
@@ -133,8 +137,9 @@ async function runScanner() {
                 event: match.event
             }));
 
-            await client.mutation("matches:upsertBatch", {
+            await client.mutation("matches:upsertHighLevelMatchBatch", {
                 scrapedMatches: matchesForConvex,
+                apiKey: CONVEX_API_KEY
             });
             console.log(`[Scanner] ✅ Synced high-level match list to Convex.`);
 
@@ -182,6 +187,12 @@ function main() {
         console.error("❌ CONVEX_URL environment variable is not set.");
         process.exit(1);
     }
+
+    if (!CONVEX_API_KEY) {
+        console.error("❌ CONVEX_API_KEY environment variable is not set.");
+        process.exit(1);
+    }
+
     client = new ConvexHttpClient(CONVEX_URL);
     console.log('✅ Worker started. Initializing scanner...');
 

@@ -8,6 +8,10 @@ async function runLocalTest() {
     if (!process.env.CONVEX_URL) {
         throw new Error("CONVEX_URL environment variable not set!");
     }
+    if (!process.env.CONVEX_API_KEY) {
+        throw new Error("CONVEX_API_KEY environment variable not set!");
+    }
+
     const client = new ConvexHttpClient(process.env.CONVEX_URL);
 
     try {
@@ -39,10 +43,11 @@ async function runLocalTest() {
             event: match.event
         }));
 
-        // 3. Call the Convex action
-        console.log('🔄 Calling Convex action to sync matches...');
-        const syncResults = await client.action("matches:upsertMatchesAction", {
+        // 3. Call the Convex mutation
+        console.log('🔄 Calling Convex mutation to sync matches...');
+        const syncResults = await client.mutation("matches:upsertHighLevelMatchBatch", {
             scrapedMatches: matchesForConvex,
+            apiKey: process.env.CONVEX_API_KEY
         });
 
         // 4. Log results
@@ -62,6 +67,5 @@ async function runLocalTest() {
 // Execute the test
 runLocalTest()
     .then(result => {
-        console.log('\n🎯 Final result:', JSON.stringify(result, null, 2));
         process.exit(result.success ? 0 : 1);
     });

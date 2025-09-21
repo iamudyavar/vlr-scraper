@@ -2,15 +2,37 @@ import { action, mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { matchSchema, detailedMatchSchema } from "./shared.js";
 import { v } from "convex/values";
+import { query } from "./_generated/server";
 import _ from 'lodash';
 
+// Helper function to validate API key
+async function validateApiKey(apiKey) {
+    if (!apiKey) {
+        throw new Error("API key is required.");
+    }
 
-export const upsertBatch = mutation({
-    // This mutation takes an array of matches
+    // Get the expected API key from environment variables set in Convex project.
+    const expectedApiKey = process.env.CONVEX_API_KEY;
+    if (!expectedApiKey) {
+        throw new Error("API key not configured on the Convex server. Please set CONVEX_API_KEY environment variable.");
+    }
+
+    if (apiKey !== expectedApiKey) {
+        throw new Error("Invalid API key");
+    }
+}
+
+// Upserts a batch of high-level match information into the database.
+export const upsertHighLevelMatchBatch = mutation({
+    // This mutation takes an array of high-level match information
     args: {
-        scrapedMatches: v.array(matchSchema)
+        scrapedMatches: v.array(matchSchema),
+        apiKey: v.string()
     },
     handler: async (ctx, args) => {
+        // Validate API key before proceeding
+        await validateApiKey(args.apiKey);
+
         const results = { inserted: 0, updated: 0, unchanged: 0 };
 
         for (const match of args.scrapedMatches) {
@@ -49,27 +71,16 @@ export const upsertBatch = mutation({
     },
 });
 
-export const upsertMatchesAction = action({
-    args: {
-        scrapedMatches: v.array(matchSchema)
-    },
-    handler: async (ctx, args) => {
-        // Actions can call mutations
-        const result = await ctx.runMutation(internal.matches.upsertBatch, {
-            scrapedMatches: args.scrapedMatches,
-        });
-        return result;
-    },
-});
-
-/**
- * Upserts detailed match data and syncs the main matches table.
- */
+// Upserts detailed match data and syncs the main matches table.
 export const upsertMatchDetails = mutation({
     args: {
-        details: detailedMatchSchema
+        details: detailedMatchSchema,
+        apiKey: v.string()
     },
     handler: async (ctx, args) => {
+        // Validate API key before proceeding
+        await validateApiKey(args.apiKey);
+
         const { details } = args;
 
         // 1. Upsert the detailed data
@@ -111,3 +122,51 @@ export const upsertMatchDetails = mutation({
         return { success: true, vlrId: details.vlrId, status: 'updated' };
     },
 });
+
+// Fetch matches grouped into live, upcoming, completed
+export const getGroupedMatches = query({
+    args: {
+        upcomingLimit: v.number(),
+        completedLimit: v.number(),
+        completedCursor: v.optional(v.string()),
+    },
+    handler: async (ctx, { upcomingLimit, completedLimit, completedCursor }) => {
+        // 1. Live matches (small set, just collect all)
+        const live = await ctx.db
+            .query("matches")
+            .withIndex("by_status", (q) => q.eq("status", "live"))
+            .collect();
+
+        // 2. Upcoming with a known time (ascending order)
+        const upcomingWithTime = await ctx.db
+            .query("matches")
+            .withIndex("by_status", (q) => q.eq("status", "upcoming"))
+            .filter((q) => q.neq(q.field("time"), null))
+            .order("time")
+            .take(upcomingLimit);
+
+        // 3. Upcoming with null time (unsorted, append to end)
+        const upcomingWithoutTime = await ctx.db
+            .query("matches")
+            .withIndex("by_status", (q) => q.eq("status", "upcoming"))
+            .filter((q) => q.eq(q.field("time"), null))
+            .collect();
+
+        const upcoming = [...upcomingWithTime, ...upcomingWithoutTime];
+
+        // 4. Completed matches (must have time → descending order with pagination)
+        const completedPage = await ctx.db
+            .query("matches")
+            .withIndex("by_status", (q) => q.eq("status", "completed"))
+            .order("time", "desc")
+            .paginate({ limit: completedLimit, cursor: completedCursor });
+
+        return {
+            live,
+            upcoming,
+            completed: completedPage.page,
+            completedCursor: completedPage.continueCursor,
+        };
+    },
+});
+
