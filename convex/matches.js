@@ -2,9 +2,13 @@ import { action, mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { matchSchema, detailedMatchSchema } from "./shared.js";
 import { v } from "convex/values";
+import { query } from "./_generated/server";
 import _ from 'lodash';
 
 
+/**
+ * Upserts a batch of matches into the database.
+ */
 export const upsertBatch = mutation({
     // This mutation takes an array of matches
     args: {
@@ -111,3 +115,51 @@ export const upsertMatchDetails = mutation({
         return { success: true, vlrId: details.vlrId, status: 'updated' };
     },
 });
+
+// Fetch matches grouped into live, upcoming, completed
+export const getGroupedMatches = query({
+    args: {
+        upcomingLimit: v.number(),
+        completedLimit: v.number(),
+        completedCursor: v.optional(v.string()),
+    },
+    handler: async (ctx, { upcomingLimit, completedLimit, completedCursor }) => {
+        // 1. Live matches (small set, just collect all)
+        const live = await ctx.db
+            .query("matches")
+            .withIndex("by_status", (q) => q.eq("status", "live"))
+            .collect();
+
+        // 2. Upcoming with a known time (ascending order)
+        const upcomingWithTime = await ctx.db
+            .query("matches")
+            .withIndex("by_status", (q) => q.eq("status", "upcoming"))
+            .filter((q) => q.neq(q.field("time"), null))
+            .order("time")
+            .take(upcomingLimit);
+
+        // 3. Upcoming with null time (unsorted, append to end)
+        const upcomingWithoutTime = await ctx.db
+            .query("matches")
+            .withIndex("by_status", (q) => q.eq("status", "upcoming"))
+            .filter((q) => q.eq(q.field("time"), null))
+            .collect();
+
+        const upcoming = [...upcomingWithTime, ...upcomingWithoutTime];
+
+        // 4. Completed matches (must have time → descending order with pagination)
+        const completedPage = await ctx.db
+            .query("matches")
+            .withIndex("by_status", (q) => q.eq("status", "completed"))
+            .order("time", "desc")
+            .paginate({ limit: completedLimit, cursor: completedCursor });
+
+        return {
+            live,
+            upcoming,
+            completed: completedPage.page,
+            completedCursor: completedPage.continueCursor,
+        };
+    },
+});
+
