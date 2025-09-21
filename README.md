@@ -1,4 +1,4 @@
-# VLR.gg Esports Tracker
+# Esports Data Tracker
 
 Scrapes Valorant match data from VLR.gg and syncs with Convex database. Runs as a containerized Deno worker with cron scheduling.
 
