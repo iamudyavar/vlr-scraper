@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "type": "module",
-  "main": "index.js",
+  "main": "worker.js",
   "scripts": {
     "test-scraper": "node tests/testScrapeMatchData.js",
     "test-convex": "node tests/testConvex.js",

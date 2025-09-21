@@ -57,13 +57,13 @@ export const detailedMatchSchema = v.object({
     team1: v.object({
         name: v.string(),
         shortName: v.string(),
-        logoUrl: v.string(),
+        logoUrl: v.union(v.string(), v.null()),
         score: v.number(),
     }),
     team2: v.object({
         name: v.string(),
         shortName: v.string(),
-        logoUrl: v.string(),
+        logoUrl: v.union(v.string(), v.null()),
         score: v.number(),
     }),
     maps: v.array(mapSchema),

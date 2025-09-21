@@ -354,8 +354,8 @@ async function _parseDetailedMatchData(html, vlrId) {
     const team1Name = $('.match-header-link.mod-1 .wf-title-med').text().trim();
     const team2Name = $('.match-header-link.mod-2 .wf-title-med').text().trim();
     const fixUrl = (url) => (url?.startsWith('//') ? `https:${url}` : url);
-    const team1LogoUrl = fixUrl($('.match-header-link.mod-1 img').attr('src'));
-    const team2LogoUrl = fixUrl($('.match-header-link.mod-2 img').attr('src'));
+    const team1LogoUrl = fixUrl($('.match-header-link.mod-1 img').attr('src')) || null;
+    const team2LogoUrl = fixUrl($('.match-header-link.mod-2 img').attr('src')) || null;
     const scoreSpans = $('.match-header-vs-score .js-spoiler span:not(.match-header-vs-score-colon)');
     const team1OverallScore = parseInt(scoreSpans.eq(0).text().trim(), 10) || 0;
     const team2OverallScore = parseInt(scoreSpans.eq(1).text().trim(), 10) || 0;
