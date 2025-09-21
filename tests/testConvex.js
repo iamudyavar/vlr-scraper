@@ -1,5 +1,5 @@
 import { ConvexHttpClient } from "convex/browser";
-import { scrapeVlrMatches } from '../syncMatchData.js';
+import { scrapeVlrMatches } from '../scrapeMatchData.js';
 import * as dotenv from 'dotenv';
 dotenv.config({ path: '.env.local' });
 
@@ -28,9 +28,9 @@ async function runLocalTest() {
             return { success: true, message: "No matches found." };
         }
 
-        // 2. Align data with the schema (id -> vlrId)
+        // 2. Align data with the schema (vlrId is already correct)
         const matchesForConvex = matches.map(match => ({
-            vlrId: match.id,
+            vlrId: match.vlrId,
             url: match.url,
             status: match.status,
             time: match.time,

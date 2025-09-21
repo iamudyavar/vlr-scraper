@@ -1,46 +1,81 @@
+import { scrapeVlrMatches, getVlrMatchDetails } from './scrapeMatchData.js';
 import { ConvexHttpClient } from "convex/browser";
-import cron from 'node-cron';
 import dotenv from 'dotenv';
-import { scrapeVlrMatches } from './syncMatchData.js';
 
-// Load environment variables from a .env file
 dotenv.config({ path: '.env.local' });
 
+// =============================================================================
+// Configuration
+// =============================================================================
+const SCANNER_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const TRACKER_INTERVAL_MS = 30 * 1000; // 30 seconds
+const MAX_RESULTS_PER_CATEGORY = 50;
+const CONVEX_URL = process.env.CONVEX_URL;
+
+// =============================================================================
+// State Management
+// =============================================================================
 /**
- * The main function to scrape and sync matches with Convex.
+ * In-memory store for active trackers.
+ * The key is the vlrId, the value is the interval ID.
+ * e.g., { '12345': 1, '67890': 2 }
  */
-async function syncMatches() {
-    console.log('🚀 Starting VLR.gg scraper worker...');
+const activeTrackers = new Map();
+let client; // Convex client initialized once
 
-    // Get the Convex URL from environment variables using Node's process.env
-    const CONVEX_URL = process.env.CONVEX_URL;
-    if (!CONVEX_URL) {
-        console.error("❌ CONVEX_URL environment variable is not set.");
-        // In a cron job, throwing an error is better than process.exit()
-        throw new Error("CONVEX_URL is a required environment variable.");
-    }
+// =============================================================================
+// Core Logic: Tracker
+// =============================================================================
 
-    const client = new ConvexHttpClient(CONVEX_URL);
-
+/**
+ * The high-frequency task that scrapes detailed data for a SINGLE live match.
+ * @param {string} vlrId - The VLR ID of the match to track.
+ * @param {string} matchUrl - The full URL to the match page.
+ */
+async function runTracker(vlrId, matchUrl) {
+    console.log(`[Tracker:${vlrId}] 🏃‍♂️ Fetching details`);
     try {
-        // 1. Scrape matches from VLR.gg
-        console.log('📡 Scraping VLR.gg matches...');
-        const { matches, scrapedAt } = await scrapeVlrMatches({
-            includeLive: true,
-            includeUpcoming: true,
-            includeCompleted: true,
-            maxResults: 50,
-        });
-        console.log(`📊 Scraped ${matches.length} matches at ${scrapedAt}`);
-
-        if (matches.length === 0) {
-            console.log("No matches found to sync. Exiting task.");
+        const details = await getVlrMatchDetails(matchUrl);
+        if (!details) {
+            console.log(`[Tracker:${vlrId}] ⚠️ No details returned. Match might be over or page changed.`);
             return;
         }
 
-        // 2. Align scraped data with the Convex schema
+        await client.mutation("matches:upsertMatchDetails", { details });
+        console.log(`[Tracker:${vlrId}] ✅ Synced detailed data to Convex.`);
+
+        // If the match is no longer live, the scanner will eventually stop this tracker.
+        if (details.overallStatus !== 'live') {
+            console.log(`[Tracker:${vlrId}] 🏁 Match status is now '${details.overallStatus}'. The scanner will stop this tracker on its next run.`);
+        }
+
+    } catch (error) {
+        console.error(`[Tracker:${vlrId}] ❌ Failed:`, error.message);
+    }
+}
+
+// =============================================================================
+// Core Logic: Scanner
+// =============================================================================
+
+/**
+ * The low-frequency task that scans the main match list and manages trackers.
+ */
+async function runScanner() {
+    console.log(`\n[Scanner] 📡 Starting scan...`);
+    try {
+        // 1. Scrape the high-level match list
+        const { matches } = await scrapeVlrMatches({
+            includeLive: true,
+            includeUpcoming: true,
+            includeCompleted: true,
+            maxResults: MAX_RESULTS_PER_CATEGORY,
+        });
+        console.log(`[Scanner] 📊 Found ${matches.length} total matches.`);
+
+        // 2. Upsert the list to Convex
         const matchesForConvex = matches.map(match => ({
-            vlrId: match.id,
+            vlrId: match.vlrId, // Corrected from match.id
             url: match.url,
             status: match.status,
             time: match.time,
@@ -49,27 +84,57 @@ async function syncMatches() {
             event: match.event
         }));
 
-        // 3. Send the batch to the Convex mutation
-        console.log('🔄 Syncing with Convex database...');
-        const syncResults = await client.mutation("matches:upsertBatch", {
+        await client.mutation("matches:upsertBatch", {
             scrapedMatches: matchesForConvex,
         });
+        console.log(`[Scanner] 🔄 Synced high-level match list to Convex.`);
 
-        // 4. Log the results
-        console.log('✅ Sync completed:');
-        console.log(`  - Inserted: ${syncResults.inserted}`);
-        console.log(`  - Updated: ${syncResults.updated}`);
-        console.log(`  - Unchanged: ${syncResults.unchanged}`);
+
+        // 3. Manage Trackers based on match status
+        const liveVlrIds = new Set();
+        for (const match of matches) {
+            if (match.status === 'live') {
+                liveVlrIds.add(match.vlrId);
+                // If a match is live but NOT being tracked, start a new tracker.
+                if (!activeTrackers.has(match.vlrId)) {
+                    console.log(`[Scanner] ✨ Found new live match! Starting tracker for ${match.vlrId}.`);
+                    // Run immediately once, then set the interval
+                    runTracker(match.vlrId, match.url);
+                    const intervalId = setInterval(() => runTracker(match.vlrId, match.url), TRACKER_INTERVAL_MS);
+                    activeTrackers.set(match.vlrId, intervalId);
+                }
+            }
+        }
+
+        // 4. Stop any trackers for matches that are no longer live.
+        for (const [vlrId, intervalId] of activeTrackers.entries()) {
+            if (!liveVlrIds.has(vlrId)) {
+                console.log(`[Scanner] 🛑 Match ${vlrId} is no longer live. Stopping tracker.`);
+                clearInterval(intervalId);
+                activeTrackers.delete(vlrId);
+            }
+        }
+        console.log(`[Scanner] 📈 Active trackers: ${activeTrackers.size}`);
 
     } catch (error) {
-        console.error('❌ Worker task failed:', error);
+        console.error('[Scanner] ❌ Task failed:', error);
     }
 }
 
-// Schedule the task to run every minute using node-cron.
-cron.schedule('* * * * *', () => {
-    console.log('🕒 Cron job triggered. Running syncMatches task.');
-    syncMatches();
-});
+// =============================================================================
+// Main Execution
+// =============================================================================
+function main() {
+    if (!CONVEX_URL) {
+        console.error("❌ CONVEX_URL environment variable is not set.");
+        process.exit(1);
+    }
+    client = new ConvexHttpClient(CONVEX_URL);
+    console.log('✅ Worker started. Initializing scanner...');
 
-console.log('✅ Node.js worker started. Cron job scheduled to run every minute.');
+    // Run the scanner once on startup, then set it to run on its interval.
+    runScanner();
+    setInterval(runScanner, SCANNER_INTERVAL_MS);
+}
+
+main();
