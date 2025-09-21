@@ -6,8 +6,16 @@ export const matchSchema = v.object({
     url: v.string(),
     status: v.union(v.literal("live"), v.literal("upcoming"), v.literal("completed")),
     time: v.union(v.string(), v.null()),
-    team1: v.object({ name: v.string(), score: v.number() }),
-    team2: v.object({ name: v.string(), score: v.number() }),
+    team1: v.object({
+        name: v.string(),
+        score: v.number(),
+        logoUrl: v.string()
+    }),
+    team2: v.object({
+        name: v.string(),
+        score: v.number(),
+        logoUrl: v.string()
+    }),
     event: v.object({ name: v.string(), series: v.string() }),
 });
 
@@ -57,13 +65,11 @@ export const detailedMatchSchema = v.object({
     team1: v.object({
         name: v.string(),
         shortName: v.string(),
-        logoUrl: v.union(v.string(), v.null()),
         score: v.number(),
     }),
     team2: v.object({
         name: v.string(),
         shortName: v.string(),
-        logoUrl: v.union(v.string(), v.null()),
         score: v.number(),
     }),
     maps: v.array(mapSchema),

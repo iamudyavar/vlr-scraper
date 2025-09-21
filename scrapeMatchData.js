@@ -168,7 +168,7 @@ async function _scrapeListPage(url, maxResults) {
                 .text()
                 .trim();
 
-            const matchData = _parseMatchCard($match, dateText);
+            const matchData = await _parseMatchCard($match, dateText);
             if (matchData) {
                 matches.push(matchData);
             }
@@ -186,12 +186,41 @@ async function _scrapeListPage(url, maxResults) {
 // =============================================================================
 
 /**
+ * Extracts team logo URLs from a detailed match page.
+ * @param {string} matchUrl - The URL of the detailed match page.
+ * @returns {Promise<Object>} An object with team1LogoUrl and team2LogoUrl.
+ */
+async function _extractTeamLogos(matchUrl) {
+    const fallbackLogoUrl = 'https://www.vlr.gg/img/vlr/tmp/vlr.png';
+
+    try {
+        const html = await _fetchHtml(matchUrl);
+        const $ = cheerio.load(html);
+
+        const fixUrl = (url) => (url?.startsWith('//') ? `https:${url}` : url);
+        const team1LogoUrl = fixUrl($('.match-header-link.mod-1 img').attr('src')) || fallbackLogoUrl;
+        const team2LogoUrl = fixUrl($('.match-header-link.mod-2 img').attr('src')) || fallbackLogoUrl;
+
+        return {
+            team1LogoUrl,
+            team2LogoUrl
+        };
+    } catch (error) {
+        console.error(`Failed to extract logos from ${matchUrl}:`, error.message);
+        return {
+            team1LogoUrl: fallbackLogoUrl,
+            team2LogoUrl: fallbackLogoUrl
+        };
+    }
+}
+
+/**
  * Parses a match card element from a match list page.
  * @param {cheerio.Cheerio<cheerio.Element>} $match - The Cheerio element for a single match.
  * @param {string} dateText - The date string associated with this match.
- * @returns {Object|null} A structured match object or null if parsing fails.
+ * @returns {Promise<Object|null>} A structured match object or null if parsing fails.
  */
-function _parseMatchCard($match, dateText) {
+async function _parseMatchCard($match, dateText) {
     try {
         const matchHref = $match.attr('href');
         if (!matchHref) return null;
@@ -218,18 +247,24 @@ function _parseMatchCard($match, dateText) {
         const matchTime = $match.find('.match-item-time').text().trim();
         const timestamp = _createTimestamp(dateText, matchTime);
 
+        // Extract logo URLs from the detailed match page
+        const matchUrl = `https://www.vlr.gg${matchHref}`;
+        const { team1LogoUrl, team2LogoUrl } = await _extractTeamLogos(matchUrl);
+
         return {
             vlrId,
-            url: `https://www.vlr.gg${matchHref}`,
+            url: matchUrl,
             status,
             time: timestamp,
             team1: {
                 name: team1Name,
-                score: score1
+                score: score1,
+                logoUrl: team1LogoUrl
             },
             team2: {
                 name: team2Name,
-                score: score2
+                score: score2,
+                logoUrl: team2LogoUrl
             },
             event: {
                 name: eventName,
@@ -372,9 +407,6 @@ async function _parseDetailedMatchData(html, vlrId) {
 
     const team1Name = $('.match-header-link.mod-1 .wf-title-med').text().trim();
     const team2Name = $('.match-header-link.mod-2 .wf-title-med').text().trim();
-    const fixUrl = (url) => (url?.startsWith('//') ? `https:${url}` : url);
-    const team1LogoUrl = fixUrl($('.match-header-link.mod-1 img').attr('src')) || null;
-    const team2LogoUrl = fixUrl($('.match-header-link.mod-2 img').attr('src')) || null;
     const scoreSpans = $('.match-header-vs-score .js-spoiler span:not(.match-header-vs-score-colon)');
     const team1OverallScore = parseInt(scoreSpans.eq(0).text().trim(), 10) || 0;
     const team2OverallScore = parseInt(scoreSpans.eq(1).text().trim(), 10) || 0;
@@ -424,13 +456,11 @@ async function _parseDetailedMatchData(html, vlrId) {
         team1: {
             name: team1Name,
             shortName: team1ShortName,
-            logoUrl: team1LogoUrl,
             score: team1OverallScore
         },
         team2: {
             name: team2Name,
             shortName: team2ShortName,
-            logoUrl: team2LogoUrl,
             score: team2OverallScore
         },
         maps,

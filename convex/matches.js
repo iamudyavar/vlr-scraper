@@ -51,7 +51,9 @@ export const upsertHighLevelMatchBatch = mutation({
                 const needsUpdate =
                     existingMatch.status !== match.status ||
                     existingMatch.team1.score !== match.team1.score ||
-                    existingMatch.team2.score !== match.team2.score;
+                    existingMatch.team2.score !== match.team2.score ||
+                    existingMatch.team1.logoUrl !== match.team1.logoUrl ||
+                    existingMatch.team2.logoUrl !== match.team2.logoUrl;
 
                 if (needsUpdate) {
                     // If data has changed, patch the existing document
@@ -115,11 +117,28 @@ export const upsertMatchDetails = mutation({
         if (mainMatch) {
             await ctx.db.patch(mainMatch._id, {
                 status: details.overallStatus,
-                team1: { ...mainMatch.team1, score: details.team1.score },
-                team2: { ...mainMatch.team2, score: details.team2.score },
+                team1: {
+                    ...mainMatch.team1,
+                    score: details.team1.score
+                },
+                team2: {
+                    ...mainMatch.team2,
+                    score: details.team2.score
+                },
             });
         }
         return { success: true, vlrId: details.vlrId, status: 'updated' };
+    },
+});
+
+// Temporary delete function for cleanup
+export const deleteMatchDetails = mutation({
+    args: {
+        id: v.id("matchDetails")
+    },
+    handler: async (ctx, args) => {
+        await ctx.db.delete(args.id);
+        return { success: true };
     },
 });
 
