@@ -55,7 +55,3 @@ temp/
 
 # Convex generated files (if any)
 convex/_generated/
-
-# Package files
-package-lock.json
-yarn.lock
