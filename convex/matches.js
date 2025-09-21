@@ -2,6 +2,7 @@ import { action, mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { matchSchema, detailedMatchSchema } from "./shared.js";
 import { v } from "convex/values";
+import _ from 'lodash';
 
 
 export const upsertBatch = mutation({
@@ -78,9 +79,20 @@ export const upsertMatchDetails = mutation({
             .unique();
 
         if (!existingDetails) {
+            // First time seeing this match, insert it.
             await ctx.db.insert("matchDetails", details);
         } else {
-            await ctx.db.patch(existingDetails._id, details);
+            // It exists, so we must compare before patching.
+            // We strip out Convex-specific fields for a clean comparison.
+            const { _id, _creationTime, ...comparableExisting } = existingDetails;
+
+            if (!_.isEqual(comparableExisting, details)) {
+                // Only patch if the data has actually changed.
+                await ctx.db.patch(existingDetails._id, details);
+            } else {
+                // Data is identical, do nothing. This saves a write.
+                return { success: true, vlrId: details.vlrId, status: 'unchanged' };
+            }
         }
 
         // 2. Sync the main 'matches' table for consistency
@@ -96,6 +108,6 @@ export const upsertMatchDetails = mutation({
                 team2: { ...mainMatch.team2, score: details.team2.score },
             });
         }
-        return { success: true, vlrId: details.vlrId };
+        return { success: true, vlrId: details.vlrId, status: 'updated' };
     },
 });
