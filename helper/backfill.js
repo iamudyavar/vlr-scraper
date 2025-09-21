@@ -9,8 +9,8 @@ dotenv.config({ path: '.env.production.local' });
 // =============================================================================
 const CONVEX_URL = process.env.CONVEX_URL;
 
-const DELAY_BETWEEN_PAGES_MS = 500; // 0.5 second
-const DELAY_BETWEEN_MATCHES_MS = 100; // 0.1 second
+const DELAY_BETWEEN_PAGES_MS = 100;
+const DELAY_BETWEEN_MATCHES_MS = 50;
 
 //  configurable page settings
 const START_PAGE = 1;
