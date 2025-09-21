@@ -61,6 +61,11 @@ async function runBackfill() {
                 consecutiveEmptyPages = 0; // Reset counter
                 console.log(`[Page ${currentPage}] ✅ Found ${matchesOnPage.length} matches. Processing details...`);
 
+                console.log(`[Page ${currentPage}] 💾 Syncing ${matchesOnPage.length} high-level matches to Convex...`);
+                await client.mutation("matches:upsertBatch", {
+                    scrapedMatches: matchesOnPage,
+                });
+
                 for (const [index, match] of matchesOnPage.entries()) {
                     console.log(`  [${index + 1}/${matchesOnPage.length}] 🔎 Scraping details for match ${match.vlrId}...`);
                     const details = await getVlrMatchDetails(match.url);
