@@ -5,14 +5,34 @@ import { v } from "convex/values";
 import { query } from "./_generated/server";
 import _ from 'lodash';
 
+// Helper function to validate API key
+async function validateApiKey(apiKey) {
+    if (!apiKey) {
+        throw new Error("API key is required.");
+    }
+
+    // Get the expected API key from environment variables set in Convex project.
+    const expectedApiKey = process.env.CONVEX_API_KEY;
+    if (!expectedApiKey) {
+        throw new Error("API key not configured on the Convex server. Please set CONVEX_API_KEY environment variable.");
+    }
+
+    if (apiKey !== expectedApiKey) {
+        throw new Error("Invalid API key");
+    }
+}
 
 // Upserts a batch of high-level match information into the database.
 export const upsertHighLevelMatchBatch = mutation({
     // This mutation takes an array of high-level match information
     args: {
-        scrapedMatches: v.array(matchSchema)
+        scrapedMatches: v.array(matchSchema),
+        apiKey: v.string()
     },
     handler: async (ctx, args) => {
+        // Validate API key before proceeding
+        await validateApiKey(args.apiKey);
+
         const results = { inserted: 0, updated: 0, unchanged: 0 };
 
         for (const match of args.scrapedMatches) {
@@ -54,9 +74,13 @@ export const upsertHighLevelMatchBatch = mutation({
 // Upserts detailed match data and syncs the main matches table.
 export const upsertMatchDetails = mutation({
     args: {
-        details: detailedMatchSchema
+        details: detailedMatchSchema,
+        apiKey: v.string()
     },
     handler: async (ctx, args) => {
+        // Validate API key before proceeding
+        await validateApiKey(args.apiKey);
+
         const { details } = args;
 
         // 1. Upsert the detailed data
@@ -96,19 +120,6 @@ export const upsertMatchDetails = mutation({
             });
         }
         return { success: true, vlrId: details.vlrId, status: 'updated' };
-    },
-});
-
-// Test action to upsert matches from local machine
-export const testUpsertMatches = action({
-    args: {
-        scrapedMatches: v.array(matchSchema)
-    },
-    handler: async (ctx, args) => {
-        const result = await ctx.runMutation(internal.matches.upsertHighLevelMatchBatch, {
-            scrapedMatches: args.scrapedMatches,
-        });
-        return result;
     },
 });
 
