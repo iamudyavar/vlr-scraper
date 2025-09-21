@@ -1,5 +1,5 @@
 # Use the official Deno image as the base image
-FROM denoland/deno:2.0.0
+FROM denoland/deno:2.5.1
 
 # Set the working directory inside the container
 WORKDIR /app
@@ -12,8 +12,8 @@ COPY denoWorker.js .
 COPY syncMatchData.js .
 
 # Create a non-root user for security
-RUN addgroup --system --gid 1001 deno && \
-    adduser --system --uid 1001 --gid 1001 deno
+RUN addgroup --system --gid 1002 deno && \
+    adduser --system --uid 1002 --gid 1002 deno
 
 # Change ownership of the app directory to the deno user
 RUN chown -R deno:deno /app
