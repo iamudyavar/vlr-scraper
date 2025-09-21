@@ -1,0 +1,9 @@
+name = "vlr-scraper-worker"
+main = "cloudflareWorker.js"
+workers_dev = false
+compatibility_date = "2024-09-23"
+compatibility_flags = [ "nodejs_compat" ]
+[triggers]
+crons = ["* * * * *"]
+[observability.logs]
+enabled = true

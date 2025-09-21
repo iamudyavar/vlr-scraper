@@ -1,0 +1,8 @@
+{
+  "node": {
+    "externalPackages": [
+      "axios",
+      "cheerio"
+    ]
+  }
+}
