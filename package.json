@@ -8,7 +8,7 @@
     "test-scraper": "node tests/testSyncMatchData.js",
     "test-convex": "node tests/testConvex.js",
     "docker:build": "docker build -t esports-tracker-worker .",
-    "docker:run": "docker run --env-file .env esports-tracker-worker",
+    "docker:run": "docker run --env-file .env.local esports-tracker-worker",
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",
     "docker:logs": "docker-compose logs -f worker",
