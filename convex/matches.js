@@ -6,11 +6,9 @@ import { query } from "./_generated/server";
 import _ from 'lodash';
 
 
-/**
- * Upserts a batch of matches into the database.
- */
-export const upsertBatch = mutation({
-    // This mutation takes an array of matches
+// Upserts a batch of high-level match information into the database.
+export const upsertHighLevelMatchBatch = mutation({
+    // This mutation takes an array of high-level match information
     args: {
         scrapedMatches: v.array(matchSchema)
     },
@@ -53,22 +51,7 @@ export const upsertBatch = mutation({
     },
 });
 
-export const upsertMatchesAction = action({
-    args: {
-        scrapedMatches: v.array(matchSchema)
-    },
-    handler: async (ctx, args) => {
-        // Actions can call mutations
-        const result = await ctx.runMutation(internal.matches.upsertBatch, {
-            scrapedMatches: args.scrapedMatches,
-        });
-        return result;
-    },
-});
-
-/**
- * Upserts detailed match data and syncs the main matches table.
- */
+// Upserts detailed match data and syncs the main matches table.
 export const upsertMatchDetails = mutation({
     args: {
         details: detailedMatchSchema
@@ -113,6 +96,19 @@ export const upsertMatchDetails = mutation({
             });
         }
         return { success: true, vlrId: details.vlrId, status: 'updated' };
+    },
+});
+
+// Test action to upsert matches from local machine
+export const testUpsertMatches = action({
+    args: {
+        scrapedMatches: v.array(matchSchema)
+    },
+    handler: async (ctx, args) => {
+        const result = await ctx.runMutation(internal.matches.upsertHighLevelMatchBatch, {
+            scrapedMatches: args.scrapedMatches,
+        });
+        return result;
     },
 });
 

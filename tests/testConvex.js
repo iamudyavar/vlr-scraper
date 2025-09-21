@@ -41,7 +41,7 @@ async function runLocalTest() {
 
         // 3. Call the Convex action
         console.log('🔄 Calling Convex action to sync matches...');
-        const syncResults = await client.action("matches:upsertMatchesAction", {
+        const syncResults = await client.action("matches:testUpsertMatches", {
             scrapedMatches: matchesForConvex,
         });
 

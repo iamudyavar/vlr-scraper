@@ -133,7 +133,7 @@ async function runScanner() {
                 event: match.event
             }));
 
-            await client.mutation("matches:upsertBatch", {
+            await client.mutation("matches:upsertHighLevelMatchBatch", {
                 scrapedMatches: matchesForConvex,
             });
             console.log(`[Scanner] ✅ Synced high-level match list to Convex.`);

@@ -62,7 +62,7 @@ async function runBackfill() {
                 console.log(`[Page ${currentPage}] ✅ Found ${matchesOnPage.length} matches. Processing details...`);
 
                 console.log(`[Page ${currentPage}] 💾 Syncing ${matchesOnPage.length} high-level matches to Convex...`);
-                await client.mutation("matches:upsertBatch", {
+                await client.mutation("matches:upsertHighLevelMatchBatch", {
                     scrapedMatches: matchesOnPage,
                 });
 
