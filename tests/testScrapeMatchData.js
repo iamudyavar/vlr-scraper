@@ -1,4 +1,4 @@
-import { scrapeVlrMatches, getVlrMatchDetails } from '../syncMatchData.js';
+import { scrapeVlrMatches, getVlrMatchDetails } from '../scrapeMatchData.js';
 import readline from 'readline';
 
 // Create readline interface

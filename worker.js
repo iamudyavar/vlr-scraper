@@ -1,7 +1,7 @@
+import { scrapeVlrMatches } from './scrapeMatchData.js';
 import { ConvexHttpClient } from "convex/browser";
 import cron from 'node-cron';
 import dotenv from 'dotenv';
-import { scrapeVlrMatches } from './syncMatchData.js';
 
 // Load environment variables from a .env file
 dotenv.config({ path: '.env.local' });

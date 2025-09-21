@@ -225,6 +225,55 @@ function _parseMatchCard($match, dateText) {
 }
 
 /**
+ * Parses the round history for a single map.
+ * @param {cheerio.Cheerio<cheerio.Element>} $gameContainer - The Cheerio element for a map's stats container.
+ * @param {string} team1Name - The name of the first team.
+ * @param {string} team2Name - The name of the second team.
+ * @param {cheerio.CheerioAPI} $ - The cheerio instance.
+ * @returns {Array<Object>} An array of objects, each representing a round.
+ */
+function _parseRoundsData($gameContainer, team1Name, team2Name, $) {
+    const rounds = [];
+    // Select all round columns, skipping the first one which contains team names
+    const $roundCols = $gameContainer.find('.vlr-rounds-row-col:not(:first-child)');
+
+    $roundCols.each((_, col) => {
+        const $col = $(col);
+        const roundNumberText = $col.find('.rnd-num').text().trim();
+        if (!roundNumberText) return; // Skip non-round columns like spacers
+
+        const roundNumber = parseInt(roundNumberText, 10);
+        const $squares = $col.find('.rnd-sq');
+        const $winnerSq = $squares.filter('.mod-win');
+
+        let winningTeam = null;
+        let winCondition = null;
+
+        if ($winnerSq.length > 0) {
+            // Determine winner by index (0 for team1, 1 for team2)
+            winningTeam = $squares.index($winnerSq) === 0 ? team1Name : team2Name;
+
+            // Extract win condition from the image src
+            const imgSrc = $winnerSq.find('img').attr('src');
+            if (imgSrc) {
+                const match = imgSrc.match(/\/([a-z]+)\.webp$/);
+                if (match && match[1]) {
+                    winCondition = match[1]; // e.g., 'elim', 'defuse', 'boom', 'time'
+                }
+            }
+        }
+
+        rounds.push({
+            roundNumber,
+            winningTeam,
+            winCondition,
+        });
+    });
+
+    return rounds;
+}
+
+/**
  * Parses the HTML of a specific match page for detailed information.
  * @param {string} html - The HTML content of the match page.
  * @param {string} vlrId - The VLR match ID.
@@ -331,6 +380,8 @@ async function _parseDetailedMatchData(html, vlrId) {
         const team1Stats = $gameContainer.length ? parsePlayerStatsTable($gameContainer.find('.wf-table-inset').eq(0), team1Name) : [];
         const team2Stats = $gameContainer.length ? parsePlayerStatsTable($gameContainer.find('.wf-table-inset').eq(1), team2Name) : [];
 
+        const rounds = $gameContainer.length ? _parseRoundsData($gameContainer, team1Name, team2Name, $) : [];
+
         maps.push({
             name: mapName,
             status: status,
@@ -338,6 +389,7 @@ async function _parseDetailedMatchData(html, vlrId) {
             team1Score: parseInt($gameContainer.find('.vm-stats-game-header .team').first().find('.score').text().trim(), 10) || 0,
             team2Score: parseInt($gameContainer.find('.vm-stats-game-header .team').last().find('.score').text().trim(), 10) || 0,
             stats: [...team1Stats, ...team2Stats],
+            rounds: rounds,
         });
     });
 
