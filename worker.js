@@ -3,7 +3,7 @@ import { ConvexHttpClient } from "convex/browser";
 import dotenv from 'dotenv';
 import _ from 'lodash';
 
-dotenv.config({ path: '.env.local' });
+dotenv.config({ path: '.env.local', quiet: true });
 
 // =============================================================================
 // Configuration

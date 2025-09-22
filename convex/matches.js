@@ -119,32 +119,6 @@ export const getGroupedMatchCards = query({
     },
 });
 
-// Get match cards for frontend display (core data only) - kept for backward compatibility
-export const getMatchCards = query({
-    args: {
-        status: v.optional(v.union(v.literal("live"), v.literal("upcoming"), v.literal("completed"))),
-        limit: v.optional(v.number()),
-    },
-    handler: async (ctx, args) => {
-        let dbQuery = ctx.db.query("matches");
-
-        if (args.status) {
-            dbQuery = dbQuery.withIndex("by_status", (q) => q.eq("status", args.status));
-        }
-
-        dbQuery = dbQuery.order("time", args.status === "completed" ? "desc" : "asc");
-
-        if (args.limit) {
-            dbQuery = dbQuery.take(args.limit);
-        }
-
-        const matches = await dbQuery.collect();
-
-        // Return only the core data needed for cards
-        return matches.map(transformToCard);
-    },
-});
-
 // Get full match data by vlrId
 export const getMatchById = query({
     args: { vlrId: v.string() },
