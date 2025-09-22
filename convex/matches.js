@@ -57,7 +57,7 @@ export const upsertMatch = mutation({
 function transformToCard(match) {
     return {
         vlrId: match.vlrId,
-        url: match.url,
+        url: `https://www.vlr.gg/${match.vlrId}`,
         status: match.status,
         time: match.time,
         team1: {

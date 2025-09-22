@@ -439,7 +439,6 @@ export async function parseDetailedMatchData(html, vlrId) {
 
     return {
         vlrId,
-        url: `https://www.vlr.gg/${vlrId}`,
         status: overallStatus,
         time: timestamp,
         team1: {
