@@ -40,7 +40,7 @@ async function runBackfill() {
     let consecutiveEmptyPages = 0;
     const endPage = PAGES_TO_SCRAPE ? START_PAGE + PAGES_TO_SCRAPE : Infinity;
 
-    // The loop now stops if it hits the page limit OR finds 3 consecutive empty pages.
+    // Stop if we reach the page limit OR finds 3 consecutive empty pages.
     while (currentPage < endPage && consecutiveEmptyPages < 3) {
         try {
             const pageProgress = PAGES_TO_SCRAPE ? `(Page ${currentPage - START_PAGE + 1}/${PAGES_TO_SCRAPE})` : `(Page ${currentPage})`;
