@@ -74,16 +74,17 @@ async function runTracker(vlrId, matchUrl) {
 
 /**
  * Compares the current scraped matches data with the cached data using lodash isEqual.
- * @param {Array} currentMatches - The current scraped matches array
+ * Expects parsed match objects (not URLs) and assumes a stable order.
+ * @param {Array} currentParsedMatches - The current parsed matches array
  * @returns {boolean} - True if data has changed, false if it's the same
  */
-function hasMatchesDataChanged(currentMatches) {
+function hasMatchesDataChanged(currentParsedMatches) {
     if (!lastScrapedMatchesData) {
         return true; // First run, data is considered "changed"
     }
 
     try {
-        return !_.isEqual(currentMatches, lastScrapedMatchesData);
+        return !_.isEqual(currentParsedMatches, lastScrapedMatchesData);
     } catch (error) {
         console.error('[Scanner] ⚠️ Error comparing matches data:', error.message);
         return true; // On error, assume data has changed to be safe
@@ -91,13 +92,13 @@ function hasMatchesDataChanged(currentMatches) {
 }
 
 /**
- * Updates the cached matches data.
- * @param {Array} matches - The matches array to cache
+ * Updates the cached matches data with parsed match objects.
+ * @param {Array} parsedMatches - The parsed matches array to cache
  */
-function updateCachedMatchesData(matches) {
+function updateCachedMatchesData(parsedMatches) {
     try {
         // Deep clone the matches array to avoid reference issues
-        lastScrapedMatchesData = _.cloneDeep(matches);
+        lastScrapedMatchesData = _.cloneDeep(parsedMatches);
     } catch (error) {
         console.error('[Scanner] ⚠️ Error caching matches data:', error.message);
     }
@@ -128,52 +129,59 @@ async function runScanner() {
         const uniqueMatchUrls = [...new Set(matchUrls)];
         console.log(`[Scanner] 📊 Found ${uniqueMatchUrls.length} total match URLs (${mainPageUrls.length} from main page, ${resultsPageUrls.length} from results page).`);
 
-        // 2. Check if data has changed using cache
-        if (!hasMatchesDataChanged(uniqueMatchUrls)) {
-            console.log(`[Scanner] ⏭️ No changes detected, skipping database operations.`);
-            return;
-        }
-
-        // 3. Process each match with detailed data
-        console.log(`[Scanner] 🔄 Processing matches with detailed data...`);
-        let processedCount = 0;
-        let skippedCount = 0;
+        // 2. Parse detailed match data for all URLs first
+        console.log(`[Scanner] 🔄 Fetching detailed match data for comparison...`);
         const liveMatches = [];
-
+        const detailedMatches = [];
+        let skippedCount = 0;
         for (const matchUrl of uniqueMatchUrls) {
             try {
                 const vlrId = matchUrl.split('/')[3];
-                // Get detailed match data
                 const detailedMatch = await getVlrMatchDetails(matchUrl);
                 if (!detailedMatch) {
                     skippedCount++;
                     continue;
                 }
+                // Ensure vlrId present for stable sort
+                if (!detailedMatch.vlrId) {
+                    detailedMatch.vlrId = vlrId;
+                }
+                detailedMatches.push(detailedMatch);
 
-                // Track live matches for tracker management
                 if (detailedMatch.status === 'live') {
                     liveMatches.push({ vlrId, url: matchUrl });
                 }
-
-                // Upsert the match with teams
-                const result = await client.mutation("matches:upsertMatch", {
-                    match: detailedMatch,
-                    apiKey: CONVEX_API_KEY
-                });
-
-                if (result.success) {
-                    processedCount++;
-                }
             } catch (error) {
-                console.error(`[Scanner] ❌ Error processing match:`, error.message);
+                console.error(`[Scanner] ❌ Error fetching details:`, error.message);
                 skippedCount++;
             }
         }
 
-        // 4. Update cache with current data
-        updateCachedMatchesData(uniqueMatchUrls);
-
-        console.log(`[Scanner] 📊 Updated: ${processedCount}, Skipped: ${skippedCount}`);
+        // 3. Stabilize ordering (to avoid order-only diffs) and compare with cache
+        const sortedDetailedMatches = _.sortBy(detailedMatches, ['vlrId']);
+        if (!hasMatchesDataChanged(sortedDetailedMatches)) {
+            console.log(`[Scanner] ⏭️ No changes detected after parsing, skipping database operations.`);
+            // Still manage trackers even if no DB changes
+        } else {
+            // 4. Upsert only after detecting changes
+            let processedCount = 0;
+            for (const match of sortedDetailedMatches) {
+                try {
+                    const result = await client.mutation("matches:upsertMatch", {
+                        match,
+                        apiKey: CONVEX_API_KEY
+                    });
+                    if (result.success) {
+                        processedCount++;
+                    }
+                } catch (error) {
+                    console.error(`[Scanner] ❌ Error upserting match:`, error.message);
+                }
+            }
+            // 5. Update cache with current parsed data
+            updateCachedMatchesData(sortedDetailedMatches);
+            console.log(`[Scanner] 📊 Updated: ${processedCount}, Skipped: ${skippedCount}`);
+        }
 
         // 3. Manage Trackers based on live matches
         const liveVlrIds = new Set();
