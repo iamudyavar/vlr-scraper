@@ -5,72 +5,6 @@ import * as cheerio from 'cheerio';
 // Main Exported Functions
 // =============================================================================
 
-/**
- * Scrapes match data from VLR.gg and returns a combined list of matches.
- * @param {Object} [options={}] - Configuration options.
- * @param {boolean} [options.includeLive=true] - Include live matches.
- * @param {boolean} [options.includeUpcoming=true] - Include upcoming matches.
- * @param {boolean} [options.includeCompleted=true] - Include completed matches.
- * @param {number} [options.maxResults=50] - Max results PER CATEGORY.
- * @returns {Promise<Object>} A promise resolving to an object with a flat `matches` array and a `scrapedAt` timestamp.
- */
-export async function scrapeVlrMatches(options = {}) {
-    const {
-        includeLive = true,
-        includeUpcoming = true,
-        includeCompleted = true,
-        maxResults = 50
-    } = options;
-
-    let allMatches = [];
-    const scrapedIds = new Set();
-
-    // Scrape from /matches (contains both live and upcoming)
-    if (includeLive || includeUpcoming) {
-        // Fetch a bit more since we filter *after* scraping the page
-        const liveUpcomingPageMatches = await _scrapeListPage('https://www.vlr.gg/matches', maxResults * 2);
-
-        const filteredMatches = liveUpcomingPageMatches.filter(match => {
-            if (scrapedIds.has(match.vlrId)) return false;
-            return (includeLive && match.status === 'live') || (includeUpcoming && match.status === 'upcoming');
-        });
-
-        // Respect maxResults for each category separately
-        let liveCount = 0;
-        let upcomingCount = 0;
-        for (const match of filteredMatches) {
-            if (match.status === 'live' && liveCount < maxResults) {
-                allMatches.push(match);
-                scrapedIds.add(match.vlrId);
-                liveCount++;
-            } else if (match.status === 'upcoming' && upcomingCount < maxResults) {
-                allMatches.push(match);
-                scrapedIds.add(match.vlrId);
-                upcomingCount++;
-            }
-        }
-    }
-
-    // Scrape from /matches/results for completed matches
-    if (includeCompleted) {
-        const completedPageMatches = await _scrapeListPage('https://www.vlr.gg/matches/results', maxResults);
-
-        let completedCount = 0;
-        for (const match of completedPageMatches) {
-            if (completedCount >= maxResults) break;
-            if (!scrapedIds.has(match.vlrId) && match.status === 'completed') {
-                allMatches.push(match);
-                scrapedIds.add(match.vlrId);
-                completedCount++;
-            }
-        }
-    }
-
-    return {
-        matches: allMatches,
-        scrapedAt: new Date().toISOString(),
-    };
-}
 
 
 /**
@@ -81,13 +15,32 @@ export async function scrapeVlrMatches(options = {}) {
  */
 export async function getVlrMatchDetails(matchUrl) {
     try {
-        const html = await _fetchHtml(matchUrl);
+        const html = await fetchHtml(matchUrl);
         const vlrId = matchUrl.split('/')[3];
         if (!vlrId || isNaN(parseInt(vlrId, 10))) {
             throw new Error(`Could not parse a valid vlrId from URL: ${matchUrl}`);
         }
 
-        return await _parseDetailedMatchData(html, vlrId);
+        const matchData = await parseDetailedMatchData(html, vlrId);
+
+        // Validate mandatory fields - discard if not met
+        if (!matchData.time) {
+            console.warn(`⚠️ Discarding match ${vlrId}: missing mandatory timestamp`);
+            return null;
+        }
+
+        // Maps can be empty (but not null) - this is allowed
+        if (matchData.maps === null) {
+            console.warn(`⚠️ Discarding match ${vlrId}: maps data is null`);
+            return null;
+        }
+
+        // Discard matches where both teams are TBD (To Be Determined)
+        if (matchData.team1.name === 'TBD' && matchData.team2.name === 'TBD') {
+            return null;
+        }
+
+        return matchData;
     } catch (error) {
         console.error(`❌ Complete failure in getVlrMatchDetails for ${matchUrl}: ${error.message}`);
         return null;
@@ -95,23 +48,66 @@ export async function getVlrMatchDetails(matchUrl) {
 }
 
 /**
- * Scrapes a single page of completed match results from VLR.gg.
- * @param {number} pageNumber - The page number to scrape (e.g., 1, 2, 3...).
- * @returns {Promise<Array>} A promise that resolves to an array of match objects from that page.
+ * Scrapes the main VLR.gg matches page to get match URLs (live/upcoming).
+ * @returns {Promise<Array>} A promise that resolves to an array of match URLs.
  */
-export async function scrapeVlrResultsPage(pageNumber = 1) {
+export async function getMatchUrlsFromMainPage() {
+    const url = 'https://www.vlr.gg/matches';
+    console.log(`[Scraper] 📄 Scraping main matches page`);
+    try {
+        const html = await fetchHtml(url);
+        const $ = cheerio.load(html);
+        const matchUrls = [];
+
+        const allMatches = $('div.col-container a.match-item');
+
+        allMatches.each((_, element) => {
+            const $match = $(element);
+            const matchHref = $match.attr('href');
+            if (matchHref) {
+                const matchUrl = `https://www.vlr.gg${matchHref}`;
+                matchUrls.push(matchUrl);
+            }
+        });
+
+        return matchUrls;
+    } catch (error) {
+        console.error(`❌ Error scraping main matches page:`, error.message);
+        return [];
+    }
+}
+
+/**
+ * Scrapes a VLR.gg results page to get match URLs.
+ * @param {number} pageNumber - The page number to scrape (e.g., 1, 2, 3...).
+ * @returns {Promise<Array>} A promise that resolves to an array of match URLs from that page.
+ */
+export async function getMatchUrlsFromResultsPage(pageNumber = 1) {
     const url = `https://www.vlr.gg/matches/results/?page=${pageNumber}`;
     console.log(`[Scraper] 📄 Scraping results page: ${pageNumber}`);
     try {
-        // We can reuse the internal _scrapeListPage function.
-        // We set maxResults very high because we want all matches on the page.
-        const matches = await _scrapeListPage(url, 200); // 200 is a safe high number for matches per page
-        return matches.filter(match => match.status === 'completed');
+        const html = await fetchHtml(url);
+        const $ = cheerio.load(html);
+        const matchUrls = [];
+
+        const allMatches = $('div.col-container a.match-item');
+
+        allMatches.each((_, element) => {
+            const $match = $(element);
+            const matchHref = $match.attr('href');
+            if (matchHref) {
+                const matchUrl = `https://www.vlr.gg${matchHref}`;
+                matchUrls.push(matchUrl);
+            }
+        });
+
+        return matchUrls;
     } catch (error) {
         console.error(`❌ Error scraping results page ${pageNumber}:`, error.message);
-        return []; // Return an empty array on failure
+        return [];
     }
 }
+
 
 
 // =============================================================================
@@ -124,7 +120,7 @@ export async function scrapeVlrResultsPage(pageNumber = 1) {
  * @param {string} url - The URL to fetch.
  * @returns {Promise<string>} The HTML content of the page.
  */
-async function _fetchHtml(url) {
+async function fetchHtml(url) {
     try {
         const {
             data
@@ -142,105 +138,13 @@ async function _fetchHtml(url) {
     }
 }
 
-/**
- * Scrapes a VLR.gg matches list page (e.g., /matches or /matches/results).
- * @param {string} url - The URL to scrape.
- * @param {number} maxResults - The maximum number of matches to return.
- * @returns {Promise<Array>} A promise that resolves to an array of match objects.
- */
-async function _scrapeListPage(url, maxResults) {
-    try {
-        const html = await _fetchHtml(url);
-        const $ = cheerio.load(html);
-        const matches = [];
-
-        const allMatches = $('div.col-container a.match-item');
-
-        for (let i = 0; i < allMatches.length; i++) {
-            if (matches.length >= maxResults) break;
-
-            const element = allMatches[i];
-            const $match = $(element);
-
-            const dateText = $match.closest('.wf-card')
-                .prevAll('.wf-label.mod-large')
-                .first()
-                .text()
-                .trim();
-
-            const matchData = _parseMatchCard($match, dateText);
-            if (matchData) {
-                matches.push(matchData);
-            }
-        }
-        return matches;
-    } catch (error) {
-        console.error(`Error scraping list page ${url}:`, error.message);
-        return [];
-    }
-}
 
 
 // =============================================================================
 // Parsing Helper Functions
 // =============================================================================
 
-/**
- * Parses a match card element from a match list page.
- * @param {cheerio.Cheerio<cheerio.Element>} $match - The Cheerio element for a single match.
- * @param {string} dateText - The date string associated with this match.
- * @returns {Object|null} A structured match object or null if parsing fails.
- */
-function _parseMatchCard($match, dateText) {
-    try {
-        const matchHref = $match.attr('href');
-        if (!matchHref) return null;
 
-        const vlrId = matchHref.split('/')[1];
-        const team1Name = $match.find('.match-item-vs-team-name').eq(0).text().trim();
-        const team2Name = $match.find('.match-item-vs-team-name').eq(1).text().trim();
-
-        if (!vlrId || !team1Name || !team2Name) return null;
-
-        const statusText = $match.find('.match-item-eta .ml .ml-status').text().trim().toLowerCase();
-        let status = 'upcoming'; // Default
-        if (statusText === 'live') status = 'live';
-        else if (statusText === 'completed') status = 'completed';
-
-        const score1Text = $match.find('.match-item-vs-team-score').eq(0).text().trim();
-        const score2Text = $match.find('.match-item-vs-team-score').eq(1).text().trim();
-        const score1 = score1Text === '–' ? 0 : parseInt(score1Text, 10) || 0;
-        const score2 = score2Text === '–' ? 0 : parseInt(score2Text, 10) || 0;
-
-        const eventName = _cleanText($match.find('.match-item-event').contents().filter((_, el) => el.type === 'text').text());
-        const eventSeries = _cleanText($match.find('.match-item-event-series').text());
-
-        const matchTime = $match.find('.match-item-time').text().trim();
-        const timestamp = _createTimestamp(dateText, matchTime);
-
-        return {
-            vlrId,
-            url: `https://www.vlr.gg${matchHref}`,
-            status,
-            time: timestamp,
-            team1: {
-                name: team1Name,
-                score: score1
-            },
-            team2: {
-                name: team2Name,
-                score: score2
-            },
-            event: {
-                name: eventName,
-                series: eventSeries
-            },
-        };
-    } catch (error) {
-        console.error('Error parsing a match card:', error);
-        return null;
-    }
-}
 
 /**
  * Parses the round history for a single map.
@@ -250,7 +154,7 @@ function _parseMatchCard($match, dateText) {
  * @param {cheerio.CheerioAPI} $ - The cheerio instance.
  * @returns {Array<Object>} An array of objects, each representing a round.
  */
-function _parseRoundsData($gameContainer, team1Name, team2Name, $) {
+function parseRoundsData($gameContainer, team1Name, team2Name, $) {
     const rounds = [];
     // Select all round columns, skipping the first one which contains team names
     const $roundCols = $gameContainer.find('.vlr-rounds-row-col:not(:first-child)');
@@ -297,7 +201,7 @@ function _parseRoundsData($gameContainer, team1Name, team2Name, $) {
  * @param {string} vlrId - The VLR match ID.
  * @returns {Promise<Object>} Detailed match data.
  */
-async function _parseDetailedMatchData(html, vlrId) {
+export async function parseDetailedMatchData(html, vlrId) {
     const $ = cheerio.load(html);
 
     // Inner helper to parse the pick/ban note string.
@@ -332,6 +236,16 @@ async function _parseDetailedMatchData(html, vlrId) {
             const playerName = $row.find('.mod-player .text-of').text().trim();
             if (!playerName) return;
 
+            // Extract playerId from the anchor within mod-player
+            const playerLink = $row.find('.mod-player a').attr('href');
+            let playerId = null;
+            if (playerLink) {
+                const match = playerLink.match(/\/player\/(\d+)\//);
+                if (match && match[1]) {
+                    playerId = match[1];
+                }
+            }
+
             const agentImg = $row.find('.mod-agent img');
             const agentName = agentImg.attr('title') || null;
             let agentIconUrl = agentImg.attr('src') || null;
@@ -340,6 +254,7 @@ async function _parseDetailedMatchData(html, vlrId) {
             }
 
             players.push({
+                playerId,
                 playerName,
                 teamName,
                 agent: {
@@ -368,13 +283,36 @@ async function _parseDetailedMatchData(html, vlrId) {
     if (statusText.includes('live')) overallStatus = 'live';
     else if (statusText.includes('final')) overallStatus = 'completed';
 
+    // Extract event info from match-header-super
+    const eventLink = $('.match-header-super .match-header-event').attr('href');
+    let eventId = null;
+    if (eventLink) {
+        const eventMatch = eventLink.match(/\/event\/(\d+)\//);
+        if (eventMatch && eventMatch[1]) {
+            eventId = eventMatch[1];
+        }
+    }
+
+    const eventName = cleanText($('.match-header-super .match-header-event div').first().text());
+    const eventSeries = cleanText($('.match-header-super .match-header-event-series').text());
+
+    // Extract timestamp from match-header-date
+    const timestampElement = $('.match-header-date .moment-tz-convert[data-utc-ts]').first();
+    const rawTimestamp = timestampElement.attr('data-utc-ts');
+    if (!rawTimestamp) {
+        throw new Error('Mandatory timestamp not found');
+    }
+
+    // Parse and standardize the timestamp (format: "2025-09-06 14:00:00")
+    const timestamp = parseUtcTimestamp(rawTimestamp);
+    if (!timestamp) {
+        throw new Error('Invalid timestamp format');
+    }
+
     const mapPicks = parsePicks($('.match-header-note').text());
 
     const team1Name = $('.match-header-link.mod-1 .wf-title-med').text().trim();
     const team2Name = $('.match-header-link.mod-2 .wf-title-med').text().trim();
-    const fixUrl = (url) => (url?.startsWith('//') ? `https:${url}` : url);
-    const team1LogoUrl = fixUrl($('.match-header-link.mod-1 img').attr('src')) || null;
-    const team2LogoUrl = fixUrl($('.match-header-link.mod-2 img').attr('src')) || null;
     const scoreSpans = $('.match-header-vs-score .js-spoiler span:not(.match-header-vs-score-colon)');
     const team1OverallScore = parseInt(scoreSpans.eq(0).text().trim(), 10) || 0;
     const team2OverallScore = parseInt(scoreSpans.eq(1).text().trim(), 10) || 0;
@@ -382,7 +320,34 @@ async function _parseDetailedMatchData(html, vlrId) {
     const team1ShortName = teamShortNameElements.eq(0).clone().children().remove().end().text().trim() || team1Name;
     const team2ShortName = teamShortNameElements.eq(1).clone().children().remove().end().text().trim() || team2Name;
 
+    // Extract team IDs from anchor links
+    const team1Link = $('.match-header-link.mod-1').attr('href');
+    const team2Link = $('.match-header-link.mod-2').attr('href');
+    let team1Id = null;
+    let team2Id = null;
+
+    if (team1Link) {
+        const match1 = team1Link.match(/\/team\/(\d+)\//);
+        if (match1 && match1[1]) {
+            team1Id = match1[1];
+        }
+    }
+
+    if (team2Link) {
+        const match2 = team2Link.match(/\/team\/(\d+)\//);
+        if (match2 && match2[1]) {
+            team2Id = match2[1];
+        }
+    }
+
+    // Extract team logo URLs
+    const fixUrl = (url) => (url?.startsWith('//') ? `https:${url}` : url);
+    const team1LogoUrl = fixUrl($('.match-header-link.mod-1 img').attr('src')) || 'https://www.vlr.gg/img/vlr/tmp/vlr.png';
+    const team2LogoUrl = fixUrl($('.match-header-link.mod-2 img').attr('src')) || 'https://www.vlr.gg/img/vlr/tmp/vlr.png';
+
     const maps = [];
+
+    // First try to find maps using the gamesnav items (multiple maps case)
     $('.vm-stats-gamesnav-item:not(.mod-all)').each((_, el) => {
         const $el = $(el);
         const mapName = $el.find('div[style*="margin-bottom"]').text().replace(/\d/g, '').trim();
@@ -398,7 +363,7 @@ async function _parseDetailedMatchData(html, vlrId) {
         const team1Stats = $gameContainer.length ? parsePlayerStatsTable($gameContainer.find('.wf-table-inset').eq(0), team1Name) : [];
         const team2Stats = $gameContainer.length ? parsePlayerStatsTable($gameContainer.find('.wf-table-inset').eq(1), team2Name) : [];
 
-        const rounds = $gameContainer.length ? _parseRoundsData($gameContainer, team1Name, team2Name, $) : [];
+        const rounds = $gameContainer.length ? parseRoundsData($gameContainer, team1Name, team2Name, $) : [];
 
         maps.push({
             name: mapName,
@@ -411,6 +376,55 @@ async function _parseDetailedMatchData(html, vlrId) {
         });
     });
 
+    // If no maps found via gamesnav, try the single map case with vm-stats-container
+    if (maps.length === 0) {
+        const $statsContainer = $('.vm-stats .vm-stats-container');
+        if ($statsContainer.length > 0) {
+            // For single map case, we need to extract map name differently
+            // Try to find map name from various possible locations
+            let mapName = 'Unknown Map';
+
+            // Try to find map name from the stats container or nearby elements
+            const mapNameElement = $statsContainer.find('.vm-stats-game-header .map').first();
+            if (mapNameElement.length > 0) {
+                mapName = mapNameElement.text().trim();
+            } else {
+                // Try to find it from the page title or other elements
+                const titleText = $('title').text();
+                const mapMatch = titleText.match(/([A-Za-z\s]+)\s*-\s*VLR\.gg/);
+                if (mapMatch && mapMatch[1]) {
+                    mapName = mapMatch[1].trim();
+                }
+            }
+
+            // Clean up map name - remove numbers, extra whitespace, and special characters
+            mapName = mapName.replace(/\d/g, '').replace(/\s+/g, ' ').replace(/[:\t\n\r]+/g, '').trim();
+
+            const $gameContainer = $statsContainer.find('.vm-stats-game').first();
+
+            let status = 'upcoming'; // Default status
+            if ($gameContainer.length > 0) {
+                if ($gameContainer.find('.vm-stats-game-header .score.mod-win').length > 0) status = 'completed';
+                else if ($statsContainer.find('.mod-live').length > 0) status = 'live';
+            }
+
+            const team1Stats = $gameContainer.length ? parsePlayerStatsTable($gameContainer.find('.wf-table-inset').eq(0), team1Name) : [];
+            const team2Stats = $gameContainer.length ? parsePlayerStatsTable($gameContainer.find('.wf-table-inset').eq(1), team2Name) : [];
+
+            const rounds = $gameContainer.length ? parseRoundsData($gameContainer, team1Name, team2Name, $) : [];
+
+            maps.push({
+                name: mapName,
+                status: status,
+                pickedBy: mapPicks[mapName] || null,
+                team1Score: parseInt($gameContainer.find('.vm-stats-game-header .team').first().find('.score').text().trim(), 10) || 0,
+                team2Score: parseInt($gameContainer.find('.vm-stats-game-header .team').last().find('.score').text().trim(), 10) || 0,
+                stats: [...team1Stats, ...team2Stats],
+                rounds: rounds,
+            });
+        }
+    }
+
     // Adjust map statuses if the whole match is completed but some maps weren't played
     if (overallStatus === 'completed') {
         maps.forEach(map => {
@@ -420,23 +434,31 @@ async function _parseDetailedMatchData(html, vlrId) {
 
     return {
         vlrId,
-        overallStatus,
+        url: `https://www.vlr.gg/${vlrId}`,
+        status: overallStatus,
+        time: timestamp,
         team1: {
+            teamId: team1Id,
             name: team1Name,
             shortName: team1ShortName,
-            logoUrl: team1LogoUrl,
-            score: team1OverallScore
+            score: team1OverallScore,
+            logoUrl: team1LogoUrl
         },
         team2: {
+            teamId: team2Id,
             name: team2Name,
             shortName: team2ShortName,
-            logoUrl: team2LogoUrl,
-            score: team2OverallScore
+            score: team2OverallScore,
+            logoUrl: team2LogoUrl
+        },
+        event: {
+            eventId: eventId,
+            name: eventName,
+            series: eventSeries
         },
         maps,
     };
 }
-
 
 // =============================================================================
 // Utility Helper Functions
@@ -447,33 +469,34 @@ async function _parseDetailedMatchData(html, vlrId) {
  * @param {string} text - The input string.
  * @returns {string} The cleaned string.
  */
-function _cleanText(text) {
+function cleanText(text) {
     if (!text) return '';
-    return text.replace(/–/g, ' - ')
-        .replace(/\s+/g, ' ')
-        .trim();
+    return text.replace(/\s+/g, ' ').trim();
 }
 
 /**
- * Creates an ISO timestamp from date and time strings.
- * @param {string} dateText - The date string (e.g., "Fri, September 19, 2025").
- * @param {string} timeText - The time string (e.g., "11:30 AM" or "TBD").
+ * Parses a UTC timestamp string and converts it to ISO format.
+ * @param {string} utcTimestamp - The UTC timestamp string (e.g., "2025-09-06 14:00:00").
  * @returns {string|null} The ISO timestamp or null if parsing fails.
  */
-function _createTimestamp(dateText, timeText) {
-    if (!dateText || !timeText || timeText.toLowerCase() === 'tbd') {
-        return null;
-    }
-    try {
-        const cleanDate = dateText.replace(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat),?\s*/i, '')
-            .replace(/\s+(Today|Yesterday|Tomorrow)$/i, '')
-            .trim();
+function parseUtcTimestamp(utcTimestamp) {
+    if (!utcTimestamp) return null;
 
-        const dateTimeString = `${cleanDate} ${timeText}`;
-        const timestamp = new Date(dateTimeString);
-        return isNaN(timestamp.getTime()) ? null : timestamp.toISOString();
+    try {
+        // Clean the timestamp string
+        const cleanTimestamp = utcTimestamp.trim();
+
+        // Parse the UTC timestamp and convert to ISO string
+        const date = new Date(cleanTimestamp + ' UTC');
+
+        if (isNaN(date.getTime())) {
+            console.error(`Invalid UTC timestamp format: "${utcTimestamp}"`);
+            return null;
+        }
+
+        return date.toISOString();
     } catch (error) {
-        console.error(`Error creating timestamp from date: "${dateText}" and time: "${timeText}"`, error);
+        console.error(`Error parsing UTC timestamp: "${utcTimestamp}"`, error);
         return null;
     }
 }

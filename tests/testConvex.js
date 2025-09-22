@@ -1,5 +1,5 @@
 import { ConvexHttpClient } from "convex/browser";
-import { scrapeVlrMatches } from '../scrapeMatchData.js';
+import { getVlrMatchDetails, getMatchUrlsFromMainPage, getMatchUrlsFromResultsPage } from '../scrapeMatchData.js';
 import * as dotenv from 'dotenv';
 dotenv.config({ path: '.env.local' });
 
@@ -17,44 +17,65 @@ async function runLocalTest() {
     try {
         console.log('🚀 Starting local VLR.gg scraper test...');
 
-        // 1. Scrape matches
-        console.log('📡 Scraping VLR.gg matches...');
-        const { matches, scrapedAt } = await scrapeVlrMatches({
-            includeLive: true,
-            includeUpcoming: true,
-            includeCompleted: true,
-            maxResults: 50,
-        });
-        console.log(`📊 Scraped ${matches.length} matches at ${scrapedAt}`);
+        // 1. Get match URLs from main page and results pages
+        console.log('📡 Getting match URLs from VLR.gg...');
+        const matchUrls = [];
 
-        if (matches.length === 0) {
+        // Get live/upcoming matches from main page
+        const mainPageUrls = await getMatchUrlsFromMainPage();
+        matchUrls.push(...mainPageUrls);
+
+        // Get completed matches from results pages
+        for (let page = 1; page <= 1; page++) {
+            const pageUrls = await getMatchUrlsFromResultsPage(page);
+            matchUrls.push(...pageUrls);
+        }
+
+        // Remove duplicates
+        const uniqueMatchUrls = [...new Set(matchUrls)];
+        console.log(`📊 Found ${uniqueMatchUrls.length} match URLs (${mainPageUrls.length} from main page, ${matchUrls.length - mainPageUrls.length} from results pages)`);
+
+        if (uniqueMatchUrls.length === 0) {
             console.log("No matches found to sync. Exiting.");
             return { success: true, message: "No matches found." };
         }
 
-        // 2. Align data with the schema (vlrId is already correct)
-        const matchesForConvex = matches.map(match => ({
-            vlrId: match.vlrId,
-            url: match.url,
-            status: match.status,
-            time: match.time,
-            team1: match.team1,
-            team2: match.team2,
-            event: match.event
-        }));
+        // 2. Process each match individually with the new unified schema
+        console.log('🔄 Processing matches with new unified schema...');
+        let processedCount = 0;
+        let errorCount = 0;
 
-        // 3. Call the Convex mutation
-        console.log('🔄 Calling Convex mutation to sync matches...');
-        const syncResults = await client.mutation("matches:upsertHighLevelMatchBatch", {
-            scrapedMatches: matchesForConvex,
-            apiKey: process.env.CONVEX_API_KEY
-        });
+        for (const matchUrl of uniqueMatchUrls) {
+            try {
+                const vlrId = matchUrl.split('/')[3];
+                // Get detailed match data
+                const detailedMatch = await getVlrMatchDetails(matchUrl);
+                if (!detailedMatch) {
+                    console.warn(`⚠️ Skipping match ${vlrId}: failed to get detailed data`);
+                    errorCount++;
+                    continue;
+                }
 
-        // 4. Log results
+                // Call the Convex mutation for each match
+                const result = await client.mutation("matches:upsertMatch", {
+                    match: detailedMatch,
+                    apiKey: process.env.CONVEX_API_KEY
+                });
+
+                if (result.success) {
+                    processedCount++;
+                    console.log(`✅ ${result.status}: ${vlrId}`);
+                }
+            } catch (error) {
+                console.error(`❌ Error processing match:`, error.message);
+                errorCount++;
+            }
+        }
+
+        // 3. Log results
         console.log('✅ Sync completed:');
-        console.log(`  - Inserted: ${syncResults.inserted}`);
-        console.log(`  - Updated: ${syncResults.updated}`);
-        console.log(`  - Unchanged: ${syncResults.unchanged}`);
+        console.log(`  - Processed: ${processedCount}`);
+        console.log(`  - Errors: ${errorCount}`);
 
         return { success: true, syncResults };
 

@@ -1,4 +1,4 @@
-import { scrapeVlrMatches, getVlrMatchDetails } from '../scrapeMatchData.js';
+import { getVlrMatchDetails, getMatchUrlsFromMainPage, getMatchUrlsFromResultsPage } from '../scrapeMatchData.js';
 import readline from 'readline';
 
 // Create readline interface
@@ -41,44 +41,40 @@ async function main() {
                 console.log('\n❌ Failed to retrieve or parse match data.');
             }
         } else {
-            const maxRecordsInput = await askQuestion('▶ Max records per category (default: 5): ');
+            const maxRecordsInput = await askQuestion('▶ Max records (default: 5): ');
             const maxRecords = maxRecordsInput ? parseInt(maxRecordsInput, 10) : 5;
 
-            const options = {
-                includeLive: false,
-                includeUpcoming: false,
-                includeCompleted: false,
-                maxResults: maxRecords,
-            };
+            console.log(`\n⏳ Getting match URLs from main page and results pages (max: ${maxRecords})...`);
 
-            switch (actionType.toLowerCase()) {
-                case 'live':
-                    options.includeLive = true;
-                    break;
-                case 'upcoming':
-                    options.includeUpcoming = true;
-                    break;
-                case 'completed':
-                    options.includeCompleted = true;
-                    break;
-                case 'all':
-                    options.includeLive = true;
-                    options.includeUpcoming = true;
-                    options.includeCompleted = true;
-                    break;
-                default:
-                    console.log('Invalid selection. Defaulting to "all".');
-                    options.includeLive = true;
-                    options.includeUpcoming = true;
-                    options.includeCompleted = true;
+            const matchUrls = [];
+
+            // Get live/upcoming matches from main page
+            const mainPageUrls = await getMatchUrlsFromMainPage();
+            matchUrls.push(...mainPageUrls);
+
+            // Get completed matches from results pages
+            for (let page = 1; page <= Math.ceil(maxRecords / 20); page++) {
+                const pageUrls = await getMatchUrlsFromResultsPage(page);
+                matchUrls.push(...pageUrls);
+                if (matchUrls.length >= maxRecords) break;
             }
 
-            console.log(`\n⏳ Scraping ${actionType} matches (max: ${maxRecords})...`);
+            // Remove duplicates and limit
+            const uniqueMatchUrls = [...new Set(matchUrls)];
+            const limitedUrls = uniqueMatchUrls.slice(0, maxRecords);
+            console.log(`\n📊 Found ${limitedUrls.length} match URLs (${mainPageUrls.length} from main page, ${matchUrls.length - mainPageUrls.length} from results pages). Processing details...`);
 
-            const listData = await scrapeVlrMatches(options);
+            const results = [];
+            for (const [index, matchUrl] of limitedUrls.entries()) {
+                console.log(`Processing ${index + 1}/${limitedUrls.length}: ${matchUrl}`);
+                const details = await getVlrMatchDetails(matchUrl);
+                if (details) {
+                    results.push(details);
+                }
+            }
 
             console.log('\n✅ Scraping complete. Results:\n');
-            console.log(JSON.stringify(listData, null, 2));
+            console.log(JSON.stringify(results, null, 2));
         }
 
     } catch (error) {

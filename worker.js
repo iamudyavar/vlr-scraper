@@ -1,4 +1,4 @@
-import { scrapeVlrMatches, getVlrMatchDetails } from './scrapeMatchData.js';
+import { getVlrMatchDetails, getMatchUrlsFromMainPage, getMatchUrlsFromResultsPage } from './scrapeMatchData.js';
 import { ConvexHttpClient } from "convex/browser";
 import dotenv from 'dotenv';
 import _ from 'lodash';
@@ -42,23 +42,25 @@ let client; // Convex client initialized once
  * @param {string} matchUrl - The full URL to the match page.
  */
 async function runTracker(vlrId, matchUrl) {
-    console.log(`[Tracker:${vlrId}] 🏃‍♂️ Fetching details`);
     try {
         const details = await getVlrMatchDetails(matchUrl);
         if (!details) {
-            console.log(`[Tracker:${vlrId}] ⚠️ No details returned. Match might be over or page changed.`);
+            console.log(`[Tracker:${vlrId}] ⚠️ Match ended or page changed, stopping tracker.`);
             return;
         }
 
-        await client.mutation("matches:upsertMatchDetails", {
-            details,
+        const result = await client.mutation("matches:upsertMatch", {
+            match: details,
             apiKey: CONVEX_API_KEY
         });
-        console.log(`[Tracker:${vlrId}] ✅ Synced detailed data to Convex.`);
+
+        if (result.success && result.status === 'updated') {
+            console.log(`[Tracker:${vlrId}] ✅ Updated`);
+        }
 
         // If the match is no longer live, the scanner will eventually stop this tracker.
-        if (details.overallStatus !== 'live') {
-            console.log(`[Tracker:${vlrId}] 🏁 Match status is now '${details.overallStatus}'. The scanner will stop this tracker on its next run.`);
+        if (details.status !== 'live') {
+            console.log(`[Tracker:${vlrId}] 🏁 Match status is now '${details.status}'. The scanner will stop this tracker on its next run.`);
         }
 
     } catch (error) {
@@ -111,60 +113,83 @@ function updateCachedMatchesData(matches) {
 async function runScanner() {
     console.log(`\n[Scanner] 📡 Starting scan...`);
     try {
-        // 1. Scrape the high-level match list
-        const { matches } = await scrapeVlrMatches({
-            includeLive: true,
-            includeUpcoming: true,
-            includeCompleted: true,
-            maxResults: MAX_RESULTS_PER_CATEGORY,
-        });
-        console.log(`[Scanner] 📊 Found ${matches.length} total matches.`);
+        // 1. Get match URLs from main page (live/upcoming) and results pages
+        const matchUrls = [];
 
-        // 2. Check if data has changed using in-memory cache
-        if (!hasMatchesDataChanged(matches)) {
-            console.log(`[Scanner] 💾 Matches data unchanged, skipping database write.`);
-        } else {
-            console.log(`[Scanner] 🔄 Matches data changed, syncing to database...`);
+        // Get live/upcoming matches from main page
+        const mainPageUrls = await getMatchUrlsFromMainPage();
+        matchUrls.push(...mainPageUrls);
 
-            // 3. Upsert the list to Convex
-            const matchesForConvex = matches.map(match => ({
-                vlrId: match.vlrId, // Corrected from match.id
-                url: match.url,
-                status: match.status,
-                time: match.time,
-                team1: match.team1,
-                team2: match.team2,
-                event: match.event
-            }));
+        // Get completed matches from latest results page only
+        const resultsPageUrls = await getMatchUrlsFromResultsPage(1);
+        matchUrls.push(...resultsPageUrls);
 
-            await client.mutation("matches:upsertHighLevelMatchBatch", {
-                scrapedMatches: matchesForConvex,
-                apiKey: CONVEX_API_KEY
-            });
-            console.log(`[Scanner] ✅ Synced high-level match list to Convex.`);
+        // Remove duplicates
+        const uniqueMatchUrls = [...new Set(matchUrls)];
+        console.log(`[Scanner] 📊 Found ${uniqueMatchUrls.length} total match URLs (${mainPageUrls.length} from main page, ${resultsPageUrls.length} from results page).`);
 
-            // 4. Update the cached data
-            updateCachedMatchesData(matches);
+        // 2. Check if data has changed using cache
+        if (!hasMatchesDataChanged(uniqueMatchUrls)) {
+            console.log(`[Scanner] ⏭️ No changes detected, skipping database operations.`);
+            return;
         }
 
+        // 3. Process each match with detailed data
+        console.log(`[Scanner] 🔄 Processing matches with detailed data...`);
+        let processedCount = 0;
+        let skippedCount = 0;
+        const liveMatches = [];
 
-        // 5. Manage Trackers based on match status
-        const liveVlrIds = new Set();
-        for (const match of matches) {
-            if (match.status === 'live') {
-                liveVlrIds.add(match.vlrId);
-                // If a match is live but NOT being tracked, start a new tracker.
-                if (!activeTrackers.has(match.vlrId)) {
-                    console.log(`[Scanner] ✨ Found new live match! Starting tracker for ${match.vlrId}.`);
-                    // Run immediately once, then set the interval
-                    runTracker(match.vlrId, match.url);
-                    const intervalId = setInterval(() => runTracker(match.vlrId, match.url), TRACKER_INTERVAL_MS);
-                    activeTrackers.set(match.vlrId, intervalId);
+        for (const matchUrl of uniqueMatchUrls) {
+            try {
+                const vlrId = matchUrl.split('/')[3];
+                // Get detailed match data
+                const detailedMatch = await getVlrMatchDetails(matchUrl);
+                if (!detailedMatch) {
+                    skippedCount++;
+                    continue;
                 }
+
+                // Track live matches for tracker management
+                if (detailedMatch.status === 'live') {
+                    liveMatches.push({ vlrId, url: matchUrl });
+                }
+
+                // Upsert the match with teams
+                const result = await client.mutation("matches:upsertMatch", {
+                    match: detailedMatch,
+                    apiKey: CONVEX_API_KEY
+                });
+
+                if (result.success) {
+                    processedCount++;
+                }
+            } catch (error) {
+                console.error(`[Scanner] ❌ Error processing match:`, error.message);
+                skippedCount++;
             }
         }
 
-        // 6. Stop any trackers for matches that are no longer live.
+        // 4. Update cache with current data
+        updateCachedMatchesData(uniqueMatchUrls);
+
+        console.log(`[Scanner] 📊 Updated: ${processedCount}, Skipped: ${skippedCount}`);
+
+        // 3. Manage Trackers based on live matches
+        const liveVlrIds = new Set();
+        for (const match of liveMatches) {
+            liveVlrIds.add(match.vlrId);
+            // If a match is live but NOT being tracked, start a new tracker.
+            if (!activeTrackers.has(match.vlrId)) {
+                console.log(`[Scanner] ✨ Found new live match! Starting tracker for ${match.vlrId}.`);
+                // Run immediately once, then set the interval
+                runTracker(match.vlrId, match.url);
+                const intervalId = setInterval(() => runTracker(match.vlrId, match.url), TRACKER_INTERVAL_MS);
+                activeTrackers.set(match.vlrId, intervalId);
+            }
+        }
+
+        // 4. Stop any trackers for matches that are no longer live.
         for (const [vlrId, intervalId] of activeTrackers.entries()) {
             if (!liveVlrIds.has(vlrId)) {
                 console.log(`[Scanner] 🛑 Match ${vlrId} is no longer live. Stopping tracker.`);

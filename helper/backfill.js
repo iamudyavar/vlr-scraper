@@ -1,4 +1,4 @@
-import { scrapeVlrResultsPage, getVlrMatchDetails } from '../scrapeMatchData.js';
+import { getVlrMatchDetails, getMatchUrlsFromResultsPage } from '../scrapeMatchData.js';
 import { ConvexHttpClient } from "convex/browser";
 import dotenv from 'dotenv';
 
@@ -48,9 +48,9 @@ async function runBackfill() {
             console.log(`[Controller] ${pageProgress} ⏳ Fetching match list...`);
             console.log(`==================================================`);
 
-            const matchesOnPage = await scrapeVlrResultsPage(currentPage);
+            const matchUrls = await getMatchUrlsFromResultsPage(currentPage);
 
-            if (matchesOnPage.length === 0) {
+            if (matchUrls.length === 0) {
                 consecutiveEmptyPages++;
                 console.log(`[Page ${currentPage}] ⚠️ No matches found. Consecutive empty pages: ${consecutiveEmptyPages}/3.`);
                 if (consecutiveEmptyPages >= 3) {
@@ -59,22 +59,21 @@ async function runBackfill() {
                 }
             } else {
                 consecutiveEmptyPages = 0; // Reset counter
-                console.log(`[Page ${currentPage}] ✅ Found ${matchesOnPage.length} matches. Processing details...`);
+                console.log(`[Page ${currentPage}] ✅ Found ${matchUrls.length} matches. Processing details...`);
 
-                console.log(`[Page ${currentPage}] 💾 Syncing ${matchesOnPage.length} high-level matches to Convex...`);
-                await client.mutation("matches:upsertHighLevelMatchBatch", {
-                    scrapedMatches: matchesOnPage,
-                });
-
-                for (const [index, match] of matchesOnPage.entries()) {
-                    console.log(`  [${index + 1}/${matchesOnPage.length}] 🔎 Scraping details for match ${match.vlrId}...`);
-                    const details = await getVlrMatchDetails(match.url);
+                for (const [index, matchUrl] of matchUrls.entries()) {
+                    const vlrId = matchUrl.split('/')[3];
+                    console.log(`  [${index + 1}/${matchUrls.length}] 🔎 Scraping details for match ${vlrId}...`);
+                    const details = await getVlrMatchDetails(matchUrl);
 
                     if (details) {
-                        await client.mutation("matches:upsertMatchDetails", { details });
-                        console.log(`    💾 Saved details for ${match.vlrId} to Convex.`);
+                        const result = await client.mutation("matches:upsertMatch", {
+                            match: details,
+                            apiKey: process.env.CONVEX_API_KEY
+                        });
+                        console.log(`    💾 ${result.status}: ${vlrId} to Convex.`);
                     } else {
-                        console.log(`    ⚠️ Could not fetch details for ${match.vlrId}. Skipping.`);
+                        console.log(`    ⚠️ Could not fetch details for ${vlrId}. Skipping.`);
                     }
                     await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_MATCHES_MS));
                 }

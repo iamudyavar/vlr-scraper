@@ -1,18 +1,8 @@
 import { v } from "convex/values";
 
-// Basic match schema (for list view)
-export const matchSchema = v.object({
-    vlrId: v.string(),
-    url: v.string(),
-    status: v.union(v.literal("live"), v.literal("upcoming"), v.literal("completed")),
-    time: v.union(v.string(), v.null()),
-    team1: v.object({ name: v.string(), score: v.number() }),
-    team2: v.object({ name: v.string(), score: v.number() }),
-    event: v.object({ name: v.string(), series: v.string() }),
-});
-
-// Player stats schema
+// Player stats schema with playerId
 export const playerStatsSchema = v.object({
+    playerId: v.union(v.string(), v.null()),
     playerName: v.string(),
     teamName: v.string(),
     agent: v.object({
@@ -50,21 +40,30 @@ export const mapSchema = v.object({
     rounds: v.array(roundSchema),
 });
 
-// Detailed match schema
-export const detailedMatchSchema = v.object({
+// Unified match schema
+export const matchSchema = v.object({
     vlrId: v.string(),
-    overallStatus: v.string(),
+    url: v.string(),
+    status: v.union(v.literal("live"), v.literal("upcoming"), v.literal("completed")),
+    time: v.string(),
     team1: v.object({
+        teamId: v.union(v.string(), v.null()),
         name: v.string(),
         shortName: v.string(),
-        logoUrl: v.union(v.string(), v.null()),
         score: v.number(),
+        logoUrl: v.string()
     }),
     team2: v.object({
+        teamId: v.union(v.string(), v.null()),
         name: v.string(),
         shortName: v.string(),
-        logoUrl: v.union(v.string(), v.null()),
         score: v.number(),
+        logoUrl: v.string()
+    }),
+    event: v.object({
+        eventId: v.union(v.string(), v.null()),
+        name: v.string(),
+        series: v.string()
     }),
     maps: v.array(mapSchema),
 });
