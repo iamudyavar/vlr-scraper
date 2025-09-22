@@ -285,7 +285,7 @@ export async function parseDetailedMatchData(html, vlrId) {
         }
     }
 
-    const eventName = cleanText($('.match-header-super .match-header-event div').first().text());
+    const eventName = cleanText($('.match-header-super .match-header-event div[style*="font-weight: 700"]').text());
     const eventSeries = cleanText($('.match-header-super .match-header-event-series').text());
 
     // Extract timestamp from match-header-date
