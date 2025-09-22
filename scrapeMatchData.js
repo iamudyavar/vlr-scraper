@@ -341,7 +341,12 @@ export async function parseDetailedMatchData(html, vlrId) {
     }
 
     // Extract team logo URLs
-    const fixUrl = (url) => (url?.startsWith('//') ? `https:${url}` : url);
+    const fixUrl = (url) => {
+        if (!url) return null;
+        if (url.startsWith('//')) return `https:${url}`;
+        if (url.startsWith('/')) return `https://www.vlr.gg${url}`;
+        return url;
+    };
     const team1LogoUrl = fixUrl($('.match-header-link.mod-1 img').attr('src')) || 'https://www.vlr.gg/img/vlr/tmp/vlr.png';
     const team2LogoUrl = fixUrl($('.match-header-link.mod-2 img').attr('src')) || 'https://www.vlr.gg/img/vlr/tmp/vlr.png';
 
