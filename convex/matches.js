@@ -1,6 +1,5 @@
-import { action, mutation } from "./_generated/server";
-import { internal } from "./_generated/api";
-import { matchSchema, detailedMatchSchema } from "./shared.js";
+import { mutation } from "./_generated/server";
+import { matchSchema } from "./shared.js";
 import { v } from "convex/values";
 import { query } from "./_generated/server";
 import _ from 'lodash';
@@ -22,123 +21,35 @@ async function validateApiKey(apiKey) {
     }
 }
 
-// Upserts a batch of high-level match information into the database.
-export const upsertHighLevelMatchBatch = mutation({
-    // This mutation takes an array of high-level match information
+// Upserts a match into the database.
+export const upsertMatch = mutation({
     args: {
-        scrapedMatches: v.array(matchSchema),
+        match: matchSchema,
         apiKey: v.string()
     },
     handler: async (ctx, args) => {
-        // Validate API key before proceeding
         await validateApiKey(args.apiKey);
 
-        const results = { inserted: 0, updated: 0, unchanged: 0 };
+        const { match } = args;
 
-        for (const match of args.scrapedMatches) {
-            // Find an existing match using the `by_vlr_id` index
-            const existingMatch = await ctx.db
-                .query("matches")
-                .withIndex("by_vlr_id", (q) => q.eq("vlrId", match.vlrId))
-                .unique();
-
-            if (!existingMatch) {
-                // If it doesn't exist, insert it
-                await ctx.db.insert("matches", match);
-                results.inserted++;
-            } else {
-                // If it exists, check if an update is needed
-                const needsUpdate =
-                    existingMatch.status !== match.status ||
-                    existingMatch.team1.score !== match.team1.score ||
-                    existingMatch.team2.score !== match.team2.score ||
-                    existingMatch.team1.logoUrl !== match.team1.logoUrl ||
-                    existingMatch.team2.logoUrl !== match.team2.logoUrl;
-
-                if (needsUpdate) {
-                    // If data has changed, patch the existing document
-                    await ctx.db.patch(existingMatch._id, {
-                        status: match.status,
-                        time: match.time,
-                        team1: match.team1,
-                        team2: match.team2,
-                    });
-                    results.updated++;
-                } else {
-                    results.unchanged++;
-                }
-            }
-        }
-        return results;
-    },
-});
-
-// Upserts detailed match data and syncs the main matches table.
-export const upsertMatchDetails = mutation({
-    args: {
-        details: detailedMatchSchema,
-        apiKey: v.string()
-    },
-    handler: async (ctx, args) => {
-        // Validate API key before proceeding
-        await validateApiKey(args.apiKey);
-
-        const { details } = args;
-
-        // 1. Upsert the detailed data
-        const existingDetails = await ctx.db
-            .query("matchDetails")
-            .withIndex("by_vlr_id", (q) => q.eq("vlrId", details.vlrId))
-            .unique();
-
-        if (!existingDetails) {
-            // First time seeing this match, insert it.
-            await ctx.db.insert("matchDetails", details);
-        } else {
-            // It exists, so we must compare before patching.
-            // We strip out Convex-specific fields for a clean comparison.
-            const { _id, _creationTime, ...comparableExisting } = existingDetails;
-
-            if (!_.isEqual(comparableExisting, details)) {
-                // Only patch if the data has actually changed.
-                await ctx.db.patch(existingDetails._id, details);
-            } else {
-                // Data is identical, do nothing. This saves a write.
-                return { success: true, vlrId: details.vlrId, status: 'unchanged' };
-            }
-        }
-
-        // 2. Sync the main 'matches' table for consistency
-        const mainMatch = await ctx.db
+        // Find existing match
+        const existingMatch = await ctx.db
             .query("matches")
-            .withIndex("by_vlr_id", (q) => q.eq("vlrId", details.vlrId))
+            .withIndex("by_vlr_id", (q) => q.eq("vlrId", match.vlrId))
             .unique();
 
-        if (mainMatch) {
-            await ctx.db.patch(mainMatch._id, {
-                status: details.overallStatus,
-                team1: {
-                    ...mainMatch.team1,
-                    score: details.team1.score
-                },
-                team2: {
-                    ...mainMatch.team2,
-                    score: details.team2.score
-                },
-            });
+        if (!existingMatch) {
+            await ctx.db.insert("matches", match);
+            return { success: true, vlrId: match.vlrId, status: 'inserted' };
+        } else {
+            const { _id, _creationTime, ...comparableExisting } = existingMatch;
+            if (!_.isEqual(comparableExisting, match)) {
+                await ctx.db.patch(existingMatch._id, match);
+                return { success: true, vlrId: match.vlrId, status: 'updated' };
+            } else {
+                return { success: true, vlrId: match.vlrId, status: 'unchanged' };
+            }
         }
-        return { success: true, vlrId: details.vlrId, status: 'updated' };
-    },
-});
-
-// Temporary delete function for cleanup
-export const deleteMatchDetails = mutation({
-    args: {
-        id: v.id("matchDetails")
-    },
-    handler: async (ctx, args) => {
-        await ctx.db.delete(args.id);
-        return { success: true };
     },
 });
 
@@ -156,24 +67,14 @@ export const getGroupedMatches = query({
             .withIndex("by_status", (q) => q.eq("status", "live"))
             .collect();
 
-        // 2. Upcoming with a known time (ascending order)
-        const upcomingWithTime = await ctx.db
+        // 2. Upcoming matches (ascending order by time)
+        const upcoming = await ctx.db
             .query("matches")
             .withIndex("by_status", (q) => q.eq("status", "upcoming"))
-            .filter((q) => q.neq(q.field("time"), null))
             .order("time")
             .take(upcomingLimit);
 
-        // 3. Upcoming with null time (unsorted, append to end)
-        const upcomingWithoutTime = await ctx.db
-            .query("matches")
-            .withIndex("by_status", (q) => q.eq("status", "upcoming"))
-            .filter((q) => q.eq(q.field("time"), null))
-            .collect();
-
-        const upcoming = [...upcomingWithTime, ...upcomingWithoutTime];
-
-        // 4. Completed matches (must have time → descending order with pagination)
+        // 3. Completed matches (descending order with pagination)
         const completedPage = await ctx.db
             .query("matches")
             .withIndex("by_status", (q) => q.eq("status", "completed"))
@@ -186,6 +87,68 @@ export const getGroupedMatches = query({
             completed: completedPage.page,
             completedCursor: completedPage.continueCursor,
         };
+    },
+});
+
+
+// Get match cards for frontend display (core data only)
+export const getMatchCards = query({
+    args: {
+        status: v.optional(v.union(v.literal("live"), v.literal("upcoming"), v.literal("completed"))),
+        limit: v.optional(v.number()),
+    },
+    handler: async (ctx, args) => {
+        let dbQuery = ctx.db.query("matches");
+
+        if (args.status) {
+            dbQuery = dbQuery.withIndex("by_status", (q) => q.eq("status", args.status));
+        }
+
+        dbQuery = dbQuery.order("time", args.status === "completed" ? "desc" : "asc");
+
+        if (args.limit) {
+            dbQuery = dbQuery.take(args.limit);
+        }
+
+        const matches = await dbQuery.collect();
+
+        // Return only the core data needed for cards
+        return matches.map(match => ({
+            vlrId: match.vlrId,
+            url: match.url,
+            status: match.status,
+            time: match.time,
+            team1: {
+                teamId: match.team1.teamId,
+                name: match.team1.name,
+                shortName: match.team1.shortName,
+                score: match.team1.score,
+                logoUrl: match.team1.logoUrl
+            },
+            team2: {
+                teamId: match.team2.teamId,
+                name: match.team2.name,
+                shortName: match.team2.shortName,
+                score: match.team2.score,
+                logoUrl: match.team2.logoUrl
+            },
+            event: {
+                eventId: match.event.eventId,
+                name: match.event.name,
+                series: match.event.series
+            }
+        }));
+    },
+});
+
+// Get full match data by vlrId
+export const getMatchById = query({
+    args: { vlrId: v.string() },
+    handler: async (ctx, args) => {
+        return await ctx.db
+            .query("matches")
+            .withIndex("by_vlr_id", (q) => q.eq("vlrId", args.vlrId))
+            .unique();
     },
 });
 
