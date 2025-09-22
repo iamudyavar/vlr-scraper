@@ -53,8 +53,37 @@ export const upsertMatch = mutation({
     },
 });
 
-// Fetch matches grouped into live, upcoming, completed
-export const getGroupedMatches = query({
+// Helper function to transform match to card format
+function transformToCard(match) {
+    return {
+        vlrId: match.vlrId,
+        url: match.url,
+        status: match.status,
+        time: match.time,
+        team1: {
+            teamId: match.team1.teamId,
+            name: match.team1.name,
+            shortName: match.team1.shortName,
+            score: match.team1.score,
+            logoUrl: match.team1.logoUrl
+        },
+        team2: {
+            teamId: match.team2.teamId,
+            name: match.team2.name,
+            shortName: match.team2.shortName,
+            score: match.team2.score,
+            logoUrl: match.team2.logoUrl
+        },
+        event: {
+            eventId: match.event.eventId,
+            name: match.event.name,
+            series: match.event.series
+        }
+    };
+}
+
+// Get grouped match cards for frontend display (core data only, grouped by status)
+export const getGroupedMatchCards = query({
     args: {
         upcomingLimit: v.number(),
         completedLimit: v.number(),
@@ -62,13 +91,13 @@ export const getGroupedMatches = query({
     },
     handler: async (ctx, { upcomingLimit, completedLimit, completedCursor }) => {
         // 1. Live matches (small set, just collect all)
-        const live = await ctx.db
+        const liveMatches = await ctx.db
             .query("matches")
             .withIndex("by_status", (q) => q.eq("status", "live"))
             .collect();
 
         // 2. Upcoming matches (ascending order by time)
-        const upcoming = await ctx.db
+        const upcomingMatches = await ctx.db
             .query("matches")
             .withIndex("by_status", (q) => q.eq("status", "upcoming"))
             .order("time")
@@ -82,16 +111,15 @@ export const getGroupedMatches = query({
             .paginate({ limit: completedLimit, cursor: completedCursor });
 
         return {
-            live,
-            upcoming,
-            completed: completedPage.page,
+            live: liveMatches.map(transformToCard),
+            upcoming: upcomingMatches.map(transformToCard),
+            completed: completedPage.page.map(transformToCard),
             completedCursor: completedPage.continueCursor,
         };
     },
 });
 
-
-// Get match cards for frontend display (core data only)
+// Get match cards for frontend display (core data only) - kept for backward compatibility
 export const getMatchCards = query({
     args: {
         status: v.optional(v.union(v.literal("live"), v.literal("upcoming"), v.literal("completed"))),
@@ -113,31 +141,7 @@ export const getMatchCards = query({
         const matches = await dbQuery.collect();
 
         // Return only the core data needed for cards
-        return matches.map(match => ({
-            vlrId: match.vlrId,
-            url: match.url,
-            status: match.status,
-            time: match.time,
-            team1: {
-                teamId: match.team1.teamId,
-                name: match.team1.name,
-                shortName: match.team1.shortName,
-                score: match.team1.score,
-                logoUrl: match.team1.logoUrl
-            },
-            team2: {
-                teamId: match.team2.teamId,
-                name: match.team2.name,
-                shortName: match.team2.shortName,
-                score: match.team2.score,
-                logoUrl: match.team2.logoUrl
-            },
-            event: {
-                eventId: match.event.eventId,
-                name: match.event.name,
-                series: match.event.series
-            }
-        }));
+        return matches.map(transformToCard);
     },
 });
 
