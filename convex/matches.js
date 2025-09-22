@@ -2,6 +2,7 @@ import { mutation } from "./_generated/server";
 import { matchSchema } from "./shared.js";
 import { v } from "convex/values";
 import { query } from "./_generated/server";
+import { paginationOptsValidator } from "convex/server";
 import _ from 'lodash';
 
 // Helper function to validate API key
@@ -82,39 +83,46 @@ function transformToCard(match) {
     };
 }
 
-// Get grouped match cards for frontend display (core data only, grouped by status)
-export const getGroupedMatchCards = query({
+// Query for the home page, fetching only live and upcoming matches.
+export const getHomePageMatches = query({
     args: {
         upcomingLimit: v.number(),
-        completedLimit: v.number(),
-        completedCursor: v.optional(v.string()),
     },
-    handler: async (ctx, { upcomingLimit, completedLimit, completedCursor }) => {
-        // 1. Live matches (small set, just collect all)
+    handler: async (ctx, { upcomingLimit }) => {
         const liveMatches = await ctx.db
             .query("matches")
             .withIndex("by_status", (q) => q.eq("status", "live"))
             .collect();
 
-        // 2. Upcoming matches (ascending order by time)
         const upcomingMatches = await ctx.db
             .query("matches")
             .withIndex("by_status_time", (q) => q.eq("status", "upcoming"))
             .order("asc")
             .take(upcomingLimit);
 
-        // 3. Completed matches (descending order with pagination)
+        return {
+            live: liveMatches.map(transformToCard),
+            upcoming: upcomingMatches.map(transformToCard),
+        };
+    },
+});
+
+// Dedicated query for paginating completed matches on the results page.
+export const getCompletedMatches = query({
+    args: {
+        paginationOpts: paginationOptsValidator,
+    },
+    handler: async (ctx, { paginationOpts }) => {
         const completedPage = await ctx.db
             .query("matches")
             .withIndex("by_status_time", (q) => q.eq("status", "completed"))
             .order("desc")
-            .paginate({ numItems: completedLimit, cursor: completedCursor });
+            .paginate(paginationOpts);
 
+        // Return the pagination result, transforming the items on the page
         return {
-            live: liveMatches.map(transformToCard),
-            upcoming: upcomingMatches.map(transformToCard),
-            completed: completedPage.page.map(transformToCard),
-            completedCursor: completedPage.continueCursor,
+            ...completedPage,
+            page: completedPage.page.map(transformToCard),
         };
     },
 });
