@@ -57,7 +57,7 @@ export const upsertMatch = mutation({
 function transformToCard(match) {
     return {
         vlrId: match.vlrId,
-        url: match.url,
+        url: `https://www.vlr.gg/${match.vlrId}`,
         status: match.status,
         time: match.time,
         team1: {
@@ -116,32 +116,6 @@ export const getGroupedMatchCards = query({
             completed: completedPage.page.map(transformToCard),
             completedCursor: completedPage.continueCursor,
         };
-    },
-});
-
-// Get match cards for frontend display (core data only) - kept for backward compatibility
-export const getMatchCards = query({
-    args: {
-        status: v.optional(v.union(v.literal("live"), v.literal("upcoming"), v.literal("completed"))),
-        limit: v.optional(v.number()),
-    },
-    handler: async (ctx, args) => {
-        let dbQuery = ctx.db.query("matches");
-
-        if (args.status) {
-            dbQuery = dbQuery.withIndex("by_status", (q) => q.eq("status", args.status));
-        }
-
-        dbQuery = dbQuery.order("time", args.status === "completed" ? "desc" : "asc");
-
-        if (args.limit) {
-            dbQuery = dbQuery.take(args.limit);
-        }
-
-        const matches = await dbQuery.collect();
-
-        // Return only the core data needed for cards
-        return matches.map(transformToCard);
     },
 });
 

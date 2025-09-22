@@ -5,8 +5,6 @@ import * as cheerio from 'cheerio';
 // Main Exported Functions
 // =============================================================================
 
-
-
 /**
  * Fetches and parses a single VLR.gg match page for its detailed data,
  * including map-by-map stats.
@@ -42,7 +40,7 @@ export async function getVlrMatchDetails(matchUrl) {
 
         return matchData;
     } catch (error) {
-        console.error(`❌ Complete failure in getVlrMatchDetails for ${matchUrl}: ${error.message}`);
+        console.error(`❌ Failure in getVlrMatchDetails for ${matchUrl}: ${error.message}`);
         return null;
     }
 }
@@ -108,8 +106,6 @@ export async function getMatchUrlsFromResultsPage(pageNumber = 1) {
     }
 }
 
-
-
 // =============================================================================
 // Core Scraper & HTML Fetcher
 // =============================================================================
@@ -138,13 +134,9 @@ async function fetchHtml(url) {
     }
 }
 
-
-
 // =============================================================================
 // Parsing Helper Functions
 // =============================================================================
-
-
 
 /**
  * Parses the round history for a single map.
@@ -341,7 +333,12 @@ export async function parseDetailedMatchData(html, vlrId) {
     }
 
     // Extract team logo URLs
-    const fixUrl = (url) => (url?.startsWith('//') ? `https:${url}` : url);
+    const fixUrl = (url) => {
+        if (!url) return null;
+        if (url.startsWith('//')) return `https:${url}`;
+        if (url.startsWith('/')) return `https://www.vlr.gg${url}`;
+        return url;
+    };
     const team1LogoUrl = fixUrl($('.match-header-link.mod-1 img').attr('src')) || 'https://www.vlr.gg/img/vlr/tmp/vlr.png';
     const team2LogoUrl = fixUrl($('.match-header-link.mod-2 img').attr('src')) || 'https://www.vlr.gg/img/vlr/tmp/vlr.png';
 
@@ -380,25 +377,13 @@ export async function parseDetailedMatchData(html, vlrId) {
     if (maps.length === 0) {
         const $statsContainer = $('.vm-stats .vm-stats-container');
         if ($statsContainer.length > 0) {
-            // For single map case, we need to extract map name differently
-            // Try to find map name from various possible locations
-            let mapName = 'Unknown Map';
-
-            // Try to find map name from the stats container or nearby elements
+            // Extract map name from stats container
             const mapNameElement = $statsContainer.find('.vm-stats-game-header .map').first();
-            if (mapNameElement.length > 0) {
-                mapName = mapNameElement.text().trim();
-            } else {
-                // Try to find it from the page title or other elements
-                const titleText = $('title').text();
-                const mapMatch = titleText.match(/([A-Za-z\s]+)\s*-\s*VLR\.gg/);
-                if (mapMatch && mapMatch[1]) {
-                    mapName = mapMatch[1].trim();
-                }
-            }
-
-            // Clean up map name - remove numbers, extra whitespace, and special characters
-            mapName = mapName.replace(/\d/g, '').replace(/\s+/g, ' ').replace(/[:\t\n\r]+/g, '').trim();
+            const mapName = (mapNameElement.length > 0 ? mapNameElement.text() : 'Unknown Map')
+                .replace(/\d/g, '')
+                .replace(/\s+/g, ' ')
+                .replace(/[:\t\n\r]+/g, '')
+                .trim();
 
             const $gameContainer = $statsContainer.find('.vm-stats-game').first();
 
@@ -434,7 +419,6 @@ export async function parseDetailedMatchData(html, vlrId) {
 
     return {
         vlrId,
-        url: `https://www.vlr.gg/${vlrId}`,
         status: overallStatus,
         time: timestamp,
         team1: {

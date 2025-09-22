@@ -43,7 +43,6 @@ export const mapSchema = v.object({
 // Unified match schema
 export const matchSchema = v.object({
     vlrId: v.string(),
-    url: v.string(),
     status: v.union(v.literal("live"), v.literal("upcoming"), v.literal("completed")),
     time: v.string(),
     team1: v.object({

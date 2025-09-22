@@ -3,7 +3,7 @@ import { ConvexHttpClient } from "convex/browser";
 import dotenv from 'dotenv';
 import _ from 'lodash';
 
-dotenv.config({ path: '.env.local' });
+dotenv.config({ path: '.env.local', quiet: true });
 
 // =============================================================================
 // Configuration
@@ -183,8 +183,9 @@ async function runScanner() {
             if (!activeTrackers.has(match.vlrId)) {
                 console.log(`[Scanner] ✨ Found new live match! Starting tracker for ${match.vlrId}.`);
                 // Run immediately once, then set the interval
-                runTracker(match.vlrId, match.url);
-                const intervalId = setInterval(() => runTracker(match.vlrId, match.url), TRACKER_INTERVAL_MS);
+                const matchUrl = `https://www.vlr.gg/${match.vlrId}`;
+                runTracker(match.vlrId, matchUrl);
+                const intervalId = setInterval(() => runTracker(match.vlrId, matchUrl), TRACKER_INTERVAL_MS);
                 activeTrackers.set(match.vlrId, intervalId);
             }
         }
