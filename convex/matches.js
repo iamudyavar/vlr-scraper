@@ -99,16 +99,16 @@ export const getGroupedMatchCards = query({
         // 2. Upcoming matches (ascending order by time)
         const upcomingMatches = await ctx.db
             .query("matches")
-            .withIndex("by_status", (q) => q.eq("status", "upcoming"))
-            .order("time")
+            .withIndex("by_status_time", (q) => q.eq("status", "upcoming"))
+            .order("asc")
             .take(upcomingLimit);
 
         // 3. Completed matches (descending order with pagination)
         const completedPage = await ctx.db
             .query("matches")
-            .withIndex("by_status", (q) => q.eq("status", "completed"))
-            .order("time", "desc")
-            .paginate({ limit: completedLimit, cursor: completedCursor });
+            .withIndex("by_status_time", (q) => q.eq("status", "completed"))
+            .order("desc")
+            .paginate({ numItems: completedLimit, cursor: completedCursor });
 
         return {
             live: liveMatches.map(transformToCard),
