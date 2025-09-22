@@ -24,8 +24,14 @@ export async function getVlrMatchDetails(matchUrl) {
         const matchData = await parseDetailedMatchData(html, vlrId);
 
         // Validate mandatory fields - discard if not met
-        if (!matchData.time || matchData.maps.length === 0) {
-            console.warn(`⚠️ Discarding match ${vlrId}: missing mandatory timestamp or maps data`);
+        if (!matchData.time) {
+            console.warn(`⚠️ Discarding match ${vlrId}: missing mandatory timestamp`);
+            return null;
+        }
+
+        // Maps can be empty (but not null) - this is allowed
+        if (matchData.maps === null) {
+            console.warn(`⚠️ Discarding match ${vlrId}: maps data is null`);
             return null;
         }
 
@@ -340,6 +346,8 @@ export async function parseDetailedMatchData(html, vlrId) {
     const team2LogoUrl = fixUrl($('.match-header-link.mod-2 img').attr('src')) || 'https://www.vlr.gg/img/vlr/tmp/vlr.png';
 
     const maps = [];
+
+    // First try to find maps using the gamesnav items (multiple maps case)
     $('.vm-stats-gamesnav-item:not(.mod-all)').each((_, el) => {
         const $el = $(el);
         const mapName = $el.find('div[style*="margin-bottom"]').text().replace(/\d/g, '').trim();
@@ -368,9 +376,53 @@ export async function parseDetailedMatchData(html, vlrId) {
         });
     });
 
-    // Validate that maps array is not empty (mandatory)
+    // If no maps found via gamesnav, try the single map case with vm-stats-container
     if (maps.length === 0) {
-        throw new Error('Mandatory maps data not found');
+        const $statsContainer = $('.vm-stats .vm-stats-container');
+        if ($statsContainer.length > 0) {
+            // For single map case, we need to extract map name differently
+            // Try to find map name from various possible locations
+            let mapName = 'Unknown Map';
+
+            // Try to find map name from the stats container or nearby elements
+            const mapNameElement = $statsContainer.find('.vm-stats-game-header .map').first();
+            if (mapNameElement.length > 0) {
+                mapName = mapNameElement.text().trim();
+            } else {
+                // Try to find it from the page title or other elements
+                const titleText = $('title').text();
+                const mapMatch = titleText.match(/([A-Za-z\s]+)\s*-\s*VLR\.gg/);
+                if (mapMatch && mapMatch[1]) {
+                    mapName = mapMatch[1].trim();
+                }
+            }
+
+            // Clean up map name - remove numbers, extra whitespace, and special characters
+            mapName = mapName.replace(/\d/g, '').replace(/\s+/g, ' ').replace(/[:\t\n\r]+/g, '').trim();
+
+            const $gameContainer = $statsContainer.find('.vm-stats-game').first();
+
+            let status = 'upcoming'; // Default status
+            if ($gameContainer.length > 0) {
+                if ($gameContainer.find('.vm-stats-game-header .score.mod-win').length > 0) status = 'completed';
+                else if ($statsContainer.find('.mod-live').length > 0) status = 'live';
+            }
+
+            const team1Stats = $gameContainer.length ? parsePlayerStatsTable($gameContainer.find('.wf-table-inset').eq(0), team1Name) : [];
+            const team2Stats = $gameContainer.length ? parsePlayerStatsTable($gameContainer.find('.wf-table-inset').eq(1), team2Name) : [];
+
+            const rounds = $gameContainer.length ? parseRoundsData($gameContainer, team1Name, team2Name, $) : [];
+
+            maps.push({
+                name: mapName,
+                status: status,
+                pickedBy: mapPicks[mapName] || null,
+                team1Score: parseInt($gameContainer.find('.vm-stats-game-header .team').first().find('.score').text().trim(), 10) || 0,
+                team2Score: parseInt($gameContainer.find('.vm-stats-game-header .team').last().find('.score').text().trim(), 10) || 0,
+                stats: [...team1Stats, ...team2Stats],
+                rounds: rounds,
+            });
+        }
     }
 
     // Adjust map statuses if the whole match is completed but some maps weren't played
