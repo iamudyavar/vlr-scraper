@@ -273,7 +273,7 @@ export async function parseDetailedMatchData(html, vlrId) {
     let overallStatus = 'upcoming';
     const statusText = $('.match-header-vs-note').first().text().toLowerCase();
     if (statusText.includes('live')) overallStatus = 'live';
-    else if (statusText.includes('final')) overallStatus = 'completed';
+    else if (statusText.includes('final') || statusText.includes('forfeited')) overallStatus = 'completed';
 
     // Extract event info from match-header-super
     const eventLink = $('.match-header-super .match-header-event').attr('href');
