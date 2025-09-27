@@ -8,7 +8,7 @@ dotenv.config({ path: '.env.local', quiet: true });
 // =============================================================================
 // Configuration
 // =============================================================================
-const SCANNER_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const SCANNER_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const TRACKER_INTERVAL_MS = 30 * 1000; // 30 seconds
 const MAX_RESULTS_PER_CATEGORY = 50;
 const CONVEX_URL = process.env.CONVEX_URL;
