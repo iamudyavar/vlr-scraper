@@ -127,15 +127,15 @@ export const searchCompletedMatches = query({
         searchTerm: v.string(),
     },
     handler: async (ctx, { searchTerm }) => {
-        // Get all completed matches first
-        const allCompletedMatches = await ctx.db
+        // Get only the last 100 completed matches to avoid memory issues
+        const recentCompletedMatches = await ctx.db
             .query("matches")
             .withIndex("by_status_time", (q) => q.eq("status", "completed"))
             .order("desc")
-            .collect();
+            .take(100);
 
         // Filter matches based on search term
-        const filteredMatches = allCompletedMatches.filter(match => {
+        const filteredMatches = recentCompletedMatches.filter(match => {
             const searchLower = searchTerm.toLowerCase();
             return (
                 match.team1.name.toLowerCase().includes(searchLower) ||
