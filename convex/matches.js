@@ -3,7 +3,6 @@ import { matchSchema } from "./shared.js";
 import { v } from "convex/values";
 import { query } from "./_generated/server";
 import { paginationOptsValidator } from "convex/server";
-import _ from 'lodash';
 
 // Helper function to validate API key
 async function validateApiKey(apiKey) {
@@ -43,13 +42,8 @@ export const upsertMatch = mutation({
             await ctx.db.insert("matches", match);
             return { success: true, vlrId: match.vlrId, status: 'inserted' };
         } else {
-            const { _id, _creationTime, ...comparableExisting } = existingMatch;
-            if (!_.isEqual(comparableExisting, match)) {
-                await ctx.db.patch(existingMatch._id, match);
-                return { success: true, vlrId: match.vlrId, status: 'updated' };
-            } else {
-                return { success: true, vlrId: match.vlrId, status: 'unchanged' };
-            }
+            await ctx.db.patch(existingMatch._id, match);
+            return { success: true, vlrId: match.vlrId, status: 'updated' };
         }
     },
 });
@@ -124,6 +118,36 @@ export const getCompletedMatches = query({
             ...completedPage,
             page: completedPage.page.map(transformToCard),
         };
+    },
+});
+
+// Search completed matches by team names, event name, or event series
+export const searchCompletedMatches = query({
+    args: {
+        searchTerm: v.string(),
+    },
+    handler: async (ctx, { searchTerm }) => {
+        // Get all completed matches first
+        const allCompletedMatches = await ctx.db
+            .query("matches")
+            .withIndex("by_status_time", (q) => q.eq("status", "completed"))
+            .order("desc")
+            .collect();
+
+        // Filter matches based on search term
+        const filteredMatches = allCompletedMatches.filter(match => {
+            const searchLower = searchTerm.toLowerCase();
+            return (
+                match.team1.name.toLowerCase().includes(searchLower) ||
+                match.team1.shortName.toLowerCase().includes(searchLower) ||
+                match.team2.name.toLowerCase().includes(searchLower) ||
+                match.team2.shortName.toLowerCase().includes(searchLower) ||
+                match.event.name.toLowerCase().includes(searchLower) ||
+                match.event.series.toLowerCase().includes(searchLower)
+            );
+        });
+
+        return filteredMatches.map(transformToCard);
     },
 });
 
