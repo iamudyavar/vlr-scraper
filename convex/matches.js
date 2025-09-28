@@ -24,7 +24,7 @@ async function validateApiKey(apiKey) {
 // Upserts a match into the database.
 export const upsertMatch = mutation({
     args: {
-        match: matchSchema, // Ensure matchSchema in shared.js allows optional `searchTerms`
+        match: matchSchema,
         apiKey: v.string()
     },
     handler: async (ctx, args) => {
@@ -32,18 +32,37 @@ export const upsertMatch = mutation({
 
         const { match } = args;
 
-        // Create a combined search terms string
-        const searchTerms = [
+        // 1. Create a list of general, keyword-based search terms
+        const generalTerms = [
             match.team1.name,
             match.team1.shortName,
             match.team2.name,
             match.team2.shortName,
             match.event.name,
             match.event.series,
-        ].join(" ").toLowerCase();
+        ];
 
-        // Add the search terms to the match object
-        const matchWithSearch = { ...match, searchTerms };
+        // 2. Create the specific "team vs team" search terms
+        const sanitize = (str) => str.toLowerCase().replace(/\s/g, "");
+        const t1n = sanitize(match.team1.name);
+        const t1s = sanitize(match.team1.shortName);
+        const t2n = sanitize(match.team2.name);
+        const t2s = sanitize(match.team2.shortName);
+
+        const matchupTerms = [
+            `${t1n}vs${t2n}`, `${t1n}vs${t2s}`, `${t1s}vs${t2n}`, `${t1s}vs${t2s}`,
+            `${t2n}vs${t1n}`, `${t2n}vs${t1s}`, `${t2s}vs${t1n}`, `${t2s}vs${t1s}`,
+        ];
+        const uniqueMatchupTerms = [...new Set(matchupTerms)];
+
+        // 3. Combine both lists into a single string
+        const allSearchTerms = [
+            ...generalTerms.map(term => term.toLowerCase()), // Lowercase the general terms
+            ...uniqueMatchupTerms // These are already lowercase
+        ].join(" ");
+
+        // Add the combined search string to the match object
+        const matchWithSearch = { ...match, searchTerms: allSearchTerms };
 
         // Find existing match
         const existingMatch = await ctx.db
@@ -52,11 +71,9 @@ export const upsertMatch = mutation({
             .unique();
 
         if (!existingMatch) {
-            // Use the object with the search terms
             await ctx.db.insert("matches", matchWithSearch);
             return { success: true, vlrId: match.vlrId, status: 'inserted' };
         } else {
-            // Use the object with the search terms
             await ctx.db.patch(existingMatch._id, matchWithSearch);
             return { success: true, vlrId: match.vlrId, status: 'updated' };
         }
@@ -168,7 +185,7 @@ export const getHomePageMatchesPaginated = query({
     },
 });
 
-// Search completed matches by team names, event name, or event series
+// Search completed matches by team names, event name, or "team1 vs team2"
 export const searchCompletedMatchesPaginated = query({
     args: {
         searchTerm: v.string(),
@@ -189,11 +206,16 @@ export const searchCompletedMatchesPaginated = query({
             };
         }
 
-        // Use the search index to find matches
+        let finalSearchTerm = searchTerm;
+        // If the query looks like a matchup, sanitize it to match our stored term format
+        if (searchTerm.toLowerCase().includes(" vs ")) {
+            finalSearchTerm = searchTerm.toLowerCase().replace(/\s/g, "");
+        }
+
         const searchResults = await ctx.db
             .query("matches")
             .withSearchIndex("by_search_terms_and_status", (q) =>
-                q.search("searchTerms", searchTerm)
+                q.search("searchTerms", finalSearchTerm) // `finalSearchTerm` is either original or sanitized
                     .eq("status", "completed")
             )
             .paginate(paginationOpts);
