@@ -24,13 +24,26 @@ async function validateApiKey(apiKey) {
 // Upserts a match into the database.
 export const upsertMatch = mutation({
     args: {
-        match: matchSchema,
+        match: matchSchema, // Ensure matchSchema in shared.js allows optional `searchTerms`
         apiKey: v.string()
     },
     handler: async (ctx, args) => {
         await validateApiKey(args.apiKey);
 
         const { match } = args;
+
+        // Create a combined search terms string
+        const searchTerms = [
+            match.team1.name,
+            match.team1.shortName,
+            match.team2.name,
+            match.team2.shortName,
+            match.event.name,
+            match.event.series,
+        ].join(" ").toLowerCase();
+
+        // Add the search terms to the match object
+        const matchWithSearch = { ...match, searchTerms };
 
         // Find existing match
         const existingMatch = await ctx.db
@@ -39,10 +52,12 @@ export const upsertMatch = mutation({
             .unique();
 
         if (!existingMatch) {
-            await ctx.db.insert("matches", match);
+            // Use the object with the search terms
+            await ctx.db.insert("matches", matchWithSearch);
             return { success: true, vlrId: match.vlrId, status: 'inserted' };
         } else {
-            await ctx.db.patch(existingMatch._id, match);
+            // Use the object with the search terms
+            await ctx.db.patch(existingMatch._id, matchWithSearch);
             return { success: true, vlrId: match.vlrId, status: 'updated' };
         }
     },
@@ -121,33 +136,73 @@ export const getCompletedMatches = query({
     },
 });
 
+// Paginated query for home page matches (live and upcoming)
+export const getHomePageMatchesPaginated = query({
+    args: {
+        paginationOpts: paginationOptsValidator,
+    },
+    handler: async (ctx, { paginationOpts }) => {
+        // Get live matches
+        const liveMatches = await ctx.db
+            .query("matches")
+            .withIndex("by_status", (q) => q.eq("status", "live"))
+            .collect();
+
+        // Get upcoming matches with pagination
+        const upcomingPage = await ctx.db
+            .query("matches")
+            .withIndex("by_status_time", (q) => q.eq("status", "upcoming"))
+            .order("asc")
+            .paginate(paginationOpts);
+
+        // Combine live matches with upcoming matches
+        const allMatches = [
+            ...liveMatches.map(transformToCard),
+            ...upcomingPage.page.map(transformToCard)
+        ];
+
+        return {
+            ...upcomingPage,
+            page: allMatches,
+        };
+    },
+});
+
 // Search completed matches by team names, event name, or event series
-export const searchCompletedMatches = query({
+export const searchCompletedMatchesPaginated = query({
     args: {
         searchTerm: v.string(),
+        paginationOpts: paginationOptsValidator,
     },
-    handler: async (ctx, { searchTerm }) => {
-        // Get only the last 100 completed matches to avoid memory issues
-        const recentCompletedMatches = await ctx.db
+    handler: async (ctx, { searchTerm, paginationOpts }) => {
+        if (!searchTerm) {
+            // If search is empty, return the standard completed matches page
+            const completedPage = await ctx.db
+                .query("matches")
+                .withIndex("by_status_time", (q) => q.eq("status", "completed"))
+                .order("desc")
+                .paginate(paginationOpts);
+
+            return {
+                ...completedPage,
+                page: completedPage.page.map(transformToCard),
+            };
+        }
+
+        // Use the search index to find matches
+        const searchResults = await ctx.db
             .query("matches")
-            .withIndex("by_status_time", (q) => q.eq("status", "completed"))
-            .order("desc")
-            .take(100);
+            .withSearchIndex("by_search_terms_and_status", (q) =>
+                q.search("searchTerms", searchTerm)
+                    .eq("status", "completed")
+            )
+            .paginate(paginationOpts);
 
-        // Filter matches based on search term
-        const filteredMatches = recentCompletedMatches.filter(match => {
-            const searchLower = searchTerm.toLowerCase();
-            return (
-                match.team1.name.toLowerCase().includes(searchLower) ||
-                match.team1.shortName.toLowerCase().includes(searchLower) ||
-                match.team2.name.toLowerCase().includes(searchLower) ||
-                match.team2.shortName.toLowerCase().includes(searchLower) ||
-                match.event.name.toLowerCase().includes(searchLower) ||
-                match.event.series.toLowerCase().includes(searchLower)
-            );
-        });
-
-        return filteredMatches.map(transformToCard);
+        // Transform the results to the card format
+        return {
+            ...searchResults,
+            page: searchResults.page.map(transformToCard),
+        };
     },
 });
 
