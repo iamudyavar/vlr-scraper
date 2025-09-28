@@ -32,6 +32,38 @@ export const upsertMatch = mutation({
 
         const { match } = args;
 
+        // 1. Create a list of general, keyword-based search terms
+        const generalTerms = [
+            match.team1.name,
+            match.team1.shortName,
+            match.team2.name,
+            match.team2.shortName,
+            match.event.name,
+            match.event.series,
+        ];
+
+        // 2. Create the specific "team vs team" search terms
+        const sanitize = (str) => str.toLowerCase().replace(/\s/g, "");
+        const t1n = sanitize(match.team1.name);
+        const t1s = sanitize(match.team1.shortName);
+        const t2n = sanitize(match.team2.name);
+        const t2s = sanitize(match.team2.shortName);
+
+        const matchupTerms = [
+            `${t1n}vs${t2n}`, `${t1n}vs${t2s}`, `${t1s}vs${t2n}`, `${t1s}vs${t2s}`,
+            `${t2n}vs${t1n}`, `${t2n}vs${t1s}`, `${t2s}vs${t1n}`, `${t2s}vs${t1s}`,
+        ];
+        const uniqueMatchupTerms = [...new Set(matchupTerms)];
+
+        // 3. Combine both lists into a single string
+        const allSearchTerms = [
+            ...generalTerms.map(term => term.toLowerCase()), // Lowercase the general terms
+            ...uniqueMatchupTerms // These are already lowercase
+        ].join(" ");
+
+        // Add the combined search string to the match object
+        const matchWithSearch = { ...match, searchTerms: allSearchTerms };
+
         // Find existing match
         const existingMatch = await ctx.db
             .query("matches")
@@ -39,10 +71,10 @@ export const upsertMatch = mutation({
             .unique();
 
         if (!existingMatch) {
-            await ctx.db.insert("matches", match);
+            await ctx.db.insert("matches", matchWithSearch);
             return { success: true, vlrId: match.vlrId, status: 'inserted' };
         } else {
-            await ctx.db.patch(existingMatch._id, match);
+            await ctx.db.patch(existingMatch._id, matchWithSearch);
             return { success: true, vlrId: match.vlrId, status: 'updated' };
         }
     },
@@ -121,33 +153,78 @@ export const getCompletedMatches = query({
     },
 });
 
-// Search completed matches by team names, event name, or event series
-export const searchCompletedMatches = query({
+// Paginated query for home page matches (live and upcoming)
+export const getHomePageMatchesPaginated = query({
+    args: {
+        paginationOpts: paginationOptsValidator,
+    },
+    handler: async (ctx, { paginationOpts }) => {
+        // Get live matches
+        const liveMatches = await ctx.db
+            .query("matches")
+            .withIndex("by_status", (q) => q.eq("status", "live"))
+            .collect();
+
+        // Get upcoming matches with pagination
+        const upcomingPage = await ctx.db
+            .query("matches")
+            .withIndex("by_status_time", (q) => q.eq("status", "upcoming"))
+            .order("asc")
+            .paginate(paginationOpts);
+
+        // Combine live matches with upcoming matches
+        const allMatches = [
+            ...liveMatches.map(transformToCard),
+            ...upcomingPage.page.map(transformToCard)
+        ];
+
+        return {
+            ...upcomingPage,
+            page: allMatches,
+        };
+    },
+});
+
+// Search completed matches by team names, event name, or "team1 vs team2"
+export const searchCompletedMatchesPaginated = query({
     args: {
         searchTerm: v.string(),
+        paginationOpts: paginationOptsValidator,
     },
-    handler: async (ctx, { searchTerm }) => {
-        // Get only the last 100 completed matches to avoid memory issues
-        const recentCompletedMatches = await ctx.db
+    handler: async (ctx, { searchTerm, paginationOpts }) => {
+        if (!searchTerm) {
+            // If search is empty, return the standard completed matches page
+            const completedPage = await ctx.db
+                .query("matches")
+                .withIndex("by_status_time", (q) => q.eq("status", "completed"))
+                .order("desc")
+                .paginate(paginationOpts);
+
+            return {
+                ...completedPage,
+                page: completedPage.page.map(transformToCard),
+            };
+        }
+
+        let finalSearchTerm = searchTerm;
+        // If the query looks like a matchup, sanitize it to match our stored term format
+        if (searchTerm.toLowerCase().includes(" vs ")) {
+            finalSearchTerm = searchTerm.toLowerCase().replace(/\s/g, "");
+        }
+
+        const searchResults = await ctx.db
             .query("matches")
-            .withIndex("by_status_time", (q) => q.eq("status", "completed"))
-            .order("desc")
-            .take(100);
+            .withSearchIndex("by_search_terms_and_status", (q) =>
+                q.search("searchTerms", finalSearchTerm) // `finalSearchTerm` is either original or sanitized
+                    .eq("status", "completed")
+            )
+            .paginate(paginationOpts);
 
-        // Filter matches based on search term
-        const filteredMatches = recentCompletedMatches.filter(match => {
-            const searchLower = searchTerm.toLowerCase();
-            return (
-                match.team1.name.toLowerCase().includes(searchLower) ||
-                match.team1.shortName.toLowerCase().includes(searchLower) ||
-                match.team2.name.toLowerCase().includes(searchLower) ||
-                match.team2.shortName.toLowerCase().includes(searchLower) ||
-                match.event.name.toLowerCase().includes(searchLower) ||
-                match.event.series.toLowerCase().includes(searchLower)
-            );
-        });
-
-        return filteredMatches.map(transformToCard);
+        // Transform the results to the card format
+        return {
+            ...searchResults,
+            page: searchResults.page.map(transformToCard),
+        };
     },
 });
 

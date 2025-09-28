@@ -65,4 +65,5 @@ export const matchSchema = v.object({
         series: v.string()
     }),
     maps: v.array(mapSchema),
+    searchTerms: v.optional(v.string()),
 });
