@@ -57,8 +57,8 @@ export const upsertMatch = mutation({
 
         // 3. Combine both lists into a single string
         const allSearchTerms = [
-            ...generalTerms.map(term => term.toLowerCase()), // Lowercase the general terms
-            ...uniqueMatchupTerms // These are already lowercase
+            ...generalTerms.map(term => term.toLowerCase()),
+            ...uniqueMatchupTerms
         ].join(" ");
 
         // Add the combined search string to the match object
