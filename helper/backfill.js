@@ -23,11 +23,11 @@ const PAGES_TO_SCRAPE = 2;
 // Main Backfill Logic
 // =============================================================================
 async function runBackfill() {
-    if (!CONVEX_URL && !CONVEX_SELF_HOSTED_URL) {
+    if (!CONVEX_URL) {
         console.error("❌ CONVEX_URL environment variable is not set.");
         process.exit(1);
     }
-    const client = new ConvexHttpClient(CONVEX_SELF_HOSTED_URL);
+    const client = new ConvexHttpClient(CONVEX_URL);
     console.log('🚀 Starting backfill process...');
 
     // Log the configuration
