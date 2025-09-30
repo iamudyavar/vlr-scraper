@@ -8,7 +8,6 @@ dotenv.config({ path: '.env.production.local' });
 // Configuration
 // =============================================================================
 const CONVEX_URL = process.env.CONVEX_URL;
-const CONVEX_SELF_HOSTED_URL = process.env.CONVEX_SELF_HOSTED_URL;
 
 const DELAY_BETWEEN_PAGES_MS = 100;
 const DELAY_BETWEEN_MATCHES_MS = 50;
