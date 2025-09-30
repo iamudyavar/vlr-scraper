@@ -16,7 +16,7 @@ const DELAY_BETWEEN_MATCHES_MS = 50;
 const START_PAGE = 1;
 // Set to a number to scrape that many pages (e.g., 10).
 // Set to null or 0 to scrape all available pages until the end.
-const PAGES_TO_SCRAPE = 55;
+const PAGES_TO_SCRAPE = 2;
 
 // =============================================================================
 // Main Backfill Logic

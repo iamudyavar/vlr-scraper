@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 
-// Player stats schema with playerId
+// Player stats schema
 export const playerStatsSchema = v.object({
     playerId: v.union(v.string(), v.null()),
     playerName: v.string(),
