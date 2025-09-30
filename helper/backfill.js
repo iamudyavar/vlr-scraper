@@ -8,6 +8,7 @@ dotenv.config({ path: '.env.production.local' });
 // Configuration
 // =============================================================================
 const CONVEX_URL = process.env.CONVEX_URL;
+const CONVEX_SELF_HOSTED_URL = process.env.CONVEX_SELF_HOSTED_URL;
 
 const DELAY_BETWEEN_PAGES_MS = 100;
 const DELAY_BETWEEN_MATCHES_MS = 50;
@@ -16,17 +17,17 @@ const DELAY_BETWEEN_MATCHES_MS = 50;
 const START_PAGE = 1;
 // Set to a number to scrape that many pages (e.g., 10).
 // Set to null or 0 to scrape all available pages until the end.
-const PAGES_TO_SCRAPE = 55;
+const PAGES_TO_SCRAPE = 2;
 
 // =============================================================================
 // Main Backfill Logic
 // =============================================================================
 async function runBackfill() {
-    if (!CONVEX_URL) {
+    if (!CONVEX_URL && !CONVEX_SELF_HOSTED_URL) {
         console.error("❌ CONVEX_URL environment variable is not set.");
         process.exit(1);
     }
-    const client = new ConvexHttpClient(CONVEX_URL);
+    const client = new ConvexHttpClient(CONVEX_SELF_HOSTED_URL);
     console.log('🚀 Starting backfill process...');
 
     // Log the configuration
