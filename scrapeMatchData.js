@@ -196,6 +196,12 @@ function parseRoundsData($gameContainer, team1Name, team2Name, $) {
 export async function parseDetailedMatchData(html, vlrId) {
     const $ = cheerio.load(html);
 
+    // Helper to normalize map names: remove hyphens then trim spaces
+    const normalizeMapName = (name) => {
+        if (!name) return '';
+        return name.replace(/-/g, '').trim();
+    };
+
     // Inner helper to parse the pick/ban note string.
     const parsePicks = (noteText) => {
         const picks = {};
@@ -213,7 +219,7 @@ export async function parseDetailedMatchData(html, vlrId) {
     };
 
     // Inner helper to parse a table of player stats for a specific map.
-    const parsePlayerStatsTable = ($table, teamName) => {
+    const parsePlayerStatsTable = ($table, teamName, options = { includeAgent: true }) => {
         const players = [];
         const $rows = $table.find('tbody tr');
 
@@ -238,11 +244,15 @@ export async function parseDetailedMatchData(html, vlrId) {
                 }
             }
 
-            const agentImg = $row.find('.mod-agent img');
-            const agentName = agentImg.attr('title') || null;
-            let agentIconUrl = agentImg.attr('src') || null;
-            if (agentIconUrl && agentIconUrl.startsWith('/')) {
-                agentIconUrl = `https://www.vlr.gg${agentIconUrl}`;
+            let agentName = null;
+            let agentIconUrl = null;
+            if (options.includeAgent) {
+                const agentImg = $row.find('.mod-agent img');
+                agentName = agentImg.attr('title') || null;
+                agentIconUrl = agentImg.attr('src') || null;
+                if (agentIconUrl && agentIconUrl.startsWith('/')) {
+                    agentIconUrl = `https://www.vlr.gg${agentIconUrl}`;
+                }
             }
 
             players.push({
@@ -288,6 +298,30 @@ export async function parseDetailedMatchData(html, vlrId) {
     const eventName = cleanText($('.match-header-super .match-header-event div[style*="font-weight: 700"]').text());
     const eventSeries = cleanText($('.match-header-super .match-header-event-series').text());
 
+    // Extract patch number from match-header-date (if present)
+    // It lives inside a div under .match-header-date and contains the word "patch"
+    let patch = null;
+    try {
+        const $patchDivs = $('.match-header-date div');
+        $patchDivs.each((_, el) => {
+            const text = $(el).text();
+            if (!text) return;
+            const lower = text.toLowerCase();
+            if (lower.includes('patch')) {
+                const match = text.match(/patch\s*([0-9.]+)/i);
+                if (match && match[1]) {
+                    patch = match[1].trim();
+                } else {
+                    // If no number captured, store the cleaned text (fallback)
+                    patch = text.trim();
+                }
+                return false; // break
+            }
+        });
+    } catch (e) {
+        patch = null;
+    }
+
     // Extract timestamp from match-header-date
     const timestampElement = $('.match-header-date .moment-tz-convert[data-utc-ts]').first();
     const rawTimestamp = timestampElement.attr('data-utc-ts');
@@ -301,7 +335,12 @@ export async function parseDetailedMatchData(html, vlrId) {
         throw new Error('Invalid timestamp format');
     }
 
-    const mapPicks = parsePicks($('.match-header-note').text());
+    // Normalize map names in picks keys to ensure lookup works after normalization
+    const rawMapPicks = parsePicks($('.match-header-note').text());
+    const mapPicks = Object.keys(rawMapPicks).reduce((acc, key) => {
+        acc[normalizeMapName(key)] = rawMapPicks[key];
+        return acc;
+    }, {});
 
     const team1Name = $('.match-header-link.mod-1 .wf-title-med').text().trim();
     const team2Name = $('.match-header-link.mod-2 .wf-title-med').text().trim();
@@ -344,10 +383,32 @@ export async function parseDetailedMatchData(html, vlrId) {
 
     const maps = [];
 
+    // Add the special "All Maps" tab data first for completed matches (no rounds, no agent parsing)
+    if (overallStatus === 'completed') {
+        const $allMapsNav = $('.vm-stats-gamesnav-item.mod-all').first();
+        const allGameId = $allMapsNav.data('game-id');
+        const $allContainer = allGameId ? $(`.vm-stats-game[data-game-id="${allGameId}"]`) : $('.vm-stats-game.mod-all');
+        if ($allContainer && $allContainer.length > 0) {
+            const team1StatsAll = parsePlayerStatsTable($allContainer.find('.wf-table-inset').eq(0), team1Name, { includeAgent: false });
+            const team2StatsAll = parsePlayerStatsTable($allContainer.find('.wf-table-inset').eq(1), team2Name, { includeAgent: false });
+
+            maps.push({
+                name: 'All Maps',
+                status: 'completed',
+                pickedBy: null,
+                team1Score: 0,
+                team2Score: 0,
+                stats: [...team1StatsAll, ...team2StatsAll],
+                rounds: null,
+            });
+        }
+    }
+
     // First try to find maps using the gamesnav items (multiple maps case)
     $('.vm-stats-gamesnav-item:not(.mod-all)').each((_, el) => {
         const $el = $(el);
-        const mapName = $el.find('div[style*="margin-bottom"]').text().replace(/\d/g, '').trim();
+        const mapNameRaw = $el.find('div[style*="margin-bottom"]').text().replace(/\d/g, '').trim();
+        const mapName = normalizeMapName(mapNameRaw);
         const gameId = $el.data('game-id');
         const $gameContainer = $(`.vm-stats-game[data-game-id="${gameId}"]`);
 
@@ -379,11 +440,11 @@ export async function parseDetailedMatchData(html, vlrId) {
         if ($statsContainer.length > 0) {
             // Extract map name from stats container
             const mapNameElement = $statsContainer.find('.vm-stats-game-header .map').first();
-            const mapName = (mapNameElement.length > 0 ? mapNameElement.text() : 'Unknown Map')
+            const mapName = normalizeMapName((mapNameElement.length > 0 ? mapNameElement.text() : 'Unknown Map')
                 .replace(/\d/g, '')
                 .replace(/\s+/g, ' ')
                 .replace(/[:\t\n\r]+/g, '')
-                .trim();
+                .trim());
 
             const $gameContainer = $statsContainer.find('.vm-stats-game').first();
 
@@ -410,6 +471,8 @@ export async function parseDetailedMatchData(html, vlrId) {
         }
     }
 
+
+
     // Adjust map statuses if the whole match is completed but some maps weren't played
     if (overallStatus === 'completed') {
         maps.forEach(map => {
@@ -421,6 +484,7 @@ export async function parseDetailedMatchData(html, vlrId) {
         vlrId,
         status: overallStatus,
         time: timestamp,
+        patch,
         team1: {
             teamId: team1Id,
             name: team1Name,
