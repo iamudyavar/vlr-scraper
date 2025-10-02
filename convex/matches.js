@@ -32,8 +32,14 @@ export const upsertMatch = mutation({
 
         const { match } = args;
 
-        // 1. Create a list of general, keyword-based search terms
-        const generalTerms = [
+        // Helper to create a "welded" search token by lowercasing and removing spaces.
+        const createWeldedToken = (str) => str.toLowerCase().replace(/\s+/g, "");
+
+        // Use a Set to automatically handle duplicate terms.
+        const searchTerms = new Set();
+
+        // 1. Add general terms, both as individual words and welded tokens.
+        const termsToIndex = [
             match.team1.name,
             match.team1.shortName,
             match.team2.name,
@@ -42,24 +48,28 @@ export const upsertMatch = mutation({
             match.event.series,
         ];
 
-        // 2. Create the specific "team vs team" search terms
-        const sanitize = (str) => str.toLowerCase().replace(/\s/g, "");
-        const t1n = sanitize(match.team1.name);
-        const t1s = sanitize(match.team1.shortName);
-        const t2n = sanitize(match.team2.name);
-        const t2s = sanitize(match.team2.shortName);
+        for (const term of termsToIndex) {
+            // Add the welded version, e.g., "stage 2" -> "stage2"
+            searchTerms.add(createWeldedToken(term));
+            // Add the individual lowercased words, e.g., "stage", "2"
+            term.toLowerCase().split(/\s+/).forEach(word => searchTerms.add(word));
+        }
+
+        // 2. Create and add the specific "team vs team" search terms.
+        const t1n = createWeldedToken(match.team1.name);
+        const t1s = createWeldedToken(match.team1.shortName);
+        const t2n = createWeldedToken(match.team2.name);
+        const t2s = createWeldedToken(match.team2.shortName);
 
         const matchupTerms = [
             `${t1n}vs${t2n}`, `${t1n}vs${t2s}`, `${t1s}vs${t2n}`, `${t1s}vs${t2s}`,
             `${t2n}vs${t1n}`, `${t2n}vs${t1s}`, `${t2s}vs${t1n}`, `${t2s}vs${t1s}`,
         ];
-        const uniqueMatchupTerms = [...new Set(matchupTerms)];
 
-        // 3. Combine both lists into a single string
-        const allSearchTerms = [
-            ...generalTerms.map(term => term.toLowerCase()),
-            ...uniqueMatchupTerms
-        ].join(" ");
+        matchupTerms.forEach(term => searchTerms.add(term));
+
+        // 3. Combine all unique terms into a single string.
+        const allSearchTerms = [...searchTerms].join(" ");
 
         // Add the combined search string to the match object
         const matchWithSearch = { ...match, searchTerms: allSearchTerms };
@@ -206,26 +216,26 @@ export const searchCompletedMatchesPaginated = query({
             };
         }
 
-        // Support comma-separated chained queries. For any segment that looks like
-        // a matchup (contains " vs "), collapse spaces to match stored terms.
-        // Example: "mibr vs nrg, 2025" => "mibrvsnrg 2025"
+        // Split the search query by commas.
         const segments = searchTerm
             .split(",")
             .map((s) => s.trim())
             .filter(Boolean);
-        const normalizedSegments = segments.map((segment) => {
-            const lower = segment.toLowerCase();
-            if (/\s+vs\s+/.test(lower)) {
-                return lower.replace(/\s/g, "");
-            }
-            return lower;
-        });
+
+        // For each segment, lowercase it and remove all spaces.
+        // This "welds" multi-word terms into single tokens.
+        // "VCT Stage 2" becomes "vctstage2"
+        // "LOUD vs SEN" becomes "loudvssen"
+        const normalizedSegments = segments.map((segment) =>
+            segment.toLowerCase().replace(/\s+/g, "")
+        );
+
         const finalSearchTerm = normalizedSegments.join(" ");
 
         const searchResults = await ctx.db
             .query("matches")
             .withSearchIndex("by_search_terms_and_status", (q) =>
-                q.search("searchTerms", finalSearchTerm) // `finalSearchTerm` is either original or sanitized
+                q.search("searchTerms", finalSearchTerm)
                     .eq("status", "completed")
             )
             .paginate(paginationOpts);
