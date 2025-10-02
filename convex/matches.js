@@ -206,11 +206,21 @@ export const searchCompletedMatchesPaginated = query({
             };
         }
 
-        let finalSearchTerm = searchTerm;
-        // If the query looks like a matchup, sanitize it to match our stored term format
-        if (searchTerm.toLowerCase().includes(" vs ")) {
-            finalSearchTerm = searchTerm.toLowerCase().replace(/\s/g, "");
-        }
+        // Support comma-separated chained queries. For any segment that looks like
+        // a matchup (contains " vs "), collapse spaces to match stored terms.
+        // Example: "mibr vs nrg, 2025" => "mibrvsnrg 2025"
+        const segments = searchTerm
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+        const normalizedSegments = segments.map((segment) => {
+            const lower = segment.toLowerCase();
+            if (/\s+vs\s+/.test(lower)) {
+                return lower.replace(/\s/g, "");
+            }
+            return lower;
+        });
+        const finalSearchTerm = normalizedSegments.join(" ");
 
         const searchResults = await ctx.db
             .query("matches")

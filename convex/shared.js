@@ -37,7 +37,7 @@ export const mapSchema = v.object({
     team1Score: v.number(),
     team2Score: v.number(),
     stats: v.array(playerStatsSchema),
-    rounds: v.array(roundSchema),
+    rounds: v.union(v.array(roundSchema), v.null()),
 });
 
 // Unified match schema
@@ -45,6 +45,7 @@ export const matchSchema = v.object({
     vlrId: v.string(),
     status: v.union(v.literal("live"), v.literal("upcoming"), v.literal("completed")),
     time: v.string(),
+    patch: v.union(v.string(), v.null()),
     team1: v.object({
         teamId: v.union(v.string(), v.null()),
         name: v.string(),
