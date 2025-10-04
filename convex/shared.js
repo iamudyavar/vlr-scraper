@@ -19,6 +19,7 @@ export const playerStatsSchema = v.object({
         headshotPercent: v.number(),
         firstKills: v.number(),
         firstDeaths: v.number(),
+        rating: v.number(),
     }),
 });
 

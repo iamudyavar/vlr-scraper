@@ -273,6 +273,7 @@ export async function parseDetailedMatchData(html, vlrId) {
                     headshotPercent: parseStat($row, 'td:nth-child(11)'),
                     firstKills: parseStat($row, '.mod-fb'),
                     firstDeaths: parseStat($row, '.mod-fd'),
+                    rating: parseStat($row, 'td:nth-child(3)'),
                 },
             });
         });

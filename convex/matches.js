@@ -35,6 +35,14 @@ export const upsertMatch = mutation({
         // Helper to create a "welded" search token by lowercasing and removing spaces.
         const createWeldedToken = (str) => str.toLowerCase().replace(/\s+/g, "");
 
+        // Helper to extract year from time string
+        const extractYear = (timeStr) => {
+            // Try to extract year from various time formats
+            // Common formats: "2024-01-15", "Jan 15, 2024", "15 Jan 2024", etc.
+            const yearMatch = timeStr.match(/\b(20\d{2})\b/);
+            return yearMatch ? yearMatch[1] : null;
+        };
+
         // Use a Set to automatically handle duplicate terms.
         const searchTerms = new Set();
 
@@ -45,7 +53,7 @@ export const upsertMatch = mutation({
             match.team2.name,
             match.team2.shortName,
             match.event.name,
-            match.event.series,
+            match.event.series.replace(/:/g, ""), // Remove colons from event series
         ];
 
         for (const term of termsToIndex) {
@@ -68,7 +76,13 @@ export const upsertMatch = mutation({
 
         matchupTerms.forEach(term => searchTerms.add(term));
 
-        // 3. Combine all unique terms into a single string.
+        // 3. Add year to search terms if available
+        const year = extractYear(match.time);
+        if (year) {
+            searchTerms.add(year);
+        }
+
+        // 4. Combine all unique terms into a single string.
         const allSearchTerms = [...searchTerms].join(" ");
 
         // Add the combined search string to the match object
