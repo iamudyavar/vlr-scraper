@@ -21,6 +21,17 @@ async function validateApiKey(apiKey) {
     }
 }
 
+// Helper function to normalize text by removing accents
+function normalizeText(text) {
+    if (!text) return text;
+
+    return text
+        .normalize('NFD') // Decompose accented characters
+        .replace(/[\u0300-\u036f]/g, '') // Remove diacritical marks
+        .toLowerCase()
+        .trim();
+}
+
 // Upserts a match into the database.
 export const upsertMatch = mutation({
     args: {
@@ -32,8 +43,8 @@ export const upsertMatch = mutation({
 
         const { match } = args;
 
-        // Helper to create a "welded" search token by lowercasing and removing spaces.
-        const createWeldedToken = (str) => str.toLowerCase().replace(/\s+/g, "");
+        // Helper to create a "welded" search token by normalizing accents, lowercasing and removing spaces.
+        const createWeldedToken = (str) => normalizeText(str).replace(/\s+/g, "");
 
         // Helper to extract year from time string
         const extractYear = (timeStr) => {
@@ -59,8 +70,8 @@ export const upsertMatch = mutation({
         for (const term of termsToIndex) {
             // Add the welded version, e.g., "stage 2" -> "stage2"
             searchTerms.add(createWeldedToken(term));
-            // Add the individual lowercased words, e.g., "stage", "2"
-            term.toLowerCase().split(/\s+/).forEach(word => searchTerms.add(word));
+            // Add the individual normalized words, e.g., "stage", "2"
+            normalizeText(term).split(/\s+/).forEach(word => searchTerms.add(word));
         }
 
         // 2. Create and add the specific "team vs team" search terms.
@@ -236,12 +247,13 @@ export const searchCompletedMatchesPaginated = query({
             .map((s) => s.trim())
             .filter(Boolean);
 
-        // For each segment, lowercase it and remove all spaces.
+        // For each segment, normalize accents, lowercase it and remove all spaces.
         // This "welds" multi-word terms into single tokens.
         // "VCT Stage 2" becomes "vctstage2"
         // "LOUD vs SEN" becomes "loudvssen"
+        // "KRÜ" becomes "kru"
         const normalizedSegments = segments.map((segment) =>
-            segment.toLowerCase().replace(/\s+/g, "")
+            normalizeText(segment).replace(/\s+/g, "")
         );
 
         const finalSearchTerm = normalizedSegments.join(" ");

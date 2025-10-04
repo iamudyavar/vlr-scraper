@@ -13,7 +13,7 @@ const DELAY_BETWEEN_PAGES_MS = 100;
 const DELAY_BETWEEN_MATCHES_MS = 50;
 
 const START_PAGE = 1;
-const PAGES_TO_SCRAPE = 2;
+const PAGES_TO_SCRAPE = 0;
 
 // =============================================================================
 // Main Backfill Logic
