@@ -234,7 +234,6 @@ export async function parseDetailedMatchData(html, vlrId) {
             const playerName = $row.find('.mod-player .text-of').text().trim();
             if (!playerName) return;
 
-            // Extract playerId from the anchor within mod-player
             const playerLink = $row.find('.mod-player a').attr('href');
             let playerId = null;
             if (playerLink) {
@@ -300,7 +299,6 @@ export async function parseDetailedMatchData(html, vlrId) {
     const eventSeries = cleanText($('.match-header-super .match-header-event-series').text());
 
     // Extract patch number from match-header-date (if present)
-    // It lives inside a div under .match-header-date and contains the word "patch"
     let patch = null;
     try {
         const $patchDivs = $('.match-header-date div');
@@ -316,7 +314,7 @@ export async function parseDetailedMatchData(html, vlrId) {
                     // If no number captured, store the cleaned text (fallback)
                     patch = text.trim();
                 }
-                return false; // break
+                return false;
             }
         });
     } catch (e) {
@@ -384,7 +382,7 @@ export async function parseDetailedMatchData(html, vlrId) {
 
     const maps = [];
 
-    // Add the special "All Maps" tab data first for completed matches (no rounds, no agent parsing)
+    // Parse "All Maps" tab data
     if (overallStatus === 'completed') {
         const $allMapsNav = $('.vm-stats-gamesnav-item.mod-all').first();
         const allGameId = $allMapsNav.data('game-id');
