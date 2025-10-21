@@ -115,6 +115,82 @@ export const upsertMatch = mutation({
     },
 });
 
+// Upserts a batch of matches into the database.
+export const upsertMatchesBatch = mutation({
+    args: {
+        matches: v.array(matchSchema),
+        apiKey: v.string(),
+    },
+    handler: async (ctx, args) => {
+        await validateApiKey(args.apiKey);
+
+        let insertedCount = 0;
+        let updatedCount = 0;
+
+        for (const match of args.matches) {
+            // Helper to create a "welded" search token by normalizing accents, lowercasing and removing spaces.
+            const createWeldedToken = (str) => normalizeText(str).replace(/\s+/g, "");
+
+            // Helper to extract year from time string
+            const extractYear = (timeStr) => {
+                const yearMatch = timeStr.match(/\b(20\d{2})\b/);
+                return yearMatch ? yearMatch[1] : null;
+            };
+
+            const searchTerms = new Set();
+
+            const termsToIndex = [
+                match.team1.name,
+                match.team1.shortName,
+                match.team2.name,
+                match.team2.shortName,
+                match.event.name,
+                match.event.series.replace(/:/g, ""),
+            ];
+
+            for (const term of termsToIndex) {
+                searchTerms.add(createWeldedToken(term));
+                normalizeText(term).split(/\s+/).forEach(word => searchTerms.add(word));
+            }
+
+            const t1n = createWeldedToken(match.team1.name);
+            const t1s = createWeldedToken(match.team1.shortName);
+            const t2n = createWeldedToken(match.team2.name);
+            const t2s = createWeldedToken(match.team2.shortName);
+
+            const matchupTerms = [
+                `${t1n}vs${t2n}`, `${t1n}vs${t2s}`, `${t1s}vs${t2n}`, `${t1s}vs${t2s}`,
+                `${t2n}vs${t1n}`, `${t2n}vs${t1s}`, `${t2s}vs${t1n}`, `${t2s}vs${t1s}`,
+            ];
+
+            matchupTerms.forEach(term => searchTerms.add(term));
+
+            const year = extractYear(match.time);
+            if (year) {
+                searchTerms.add(year);
+            }
+
+            const allSearchTerms = [...searchTerms].join(" ");
+            const matchWithSearch = { ...match, searchTerms: allSearchTerms };
+
+            const existingMatch = await ctx.db
+                .query("matches")
+                .withIndex("by_vlr_id", (q) => q.eq("vlrId", match.vlrId))
+                .unique();
+
+            if (!existingMatch) {
+                await ctx.db.insert("matches", matchWithSearch);
+                insertedCount++;
+            } else {
+                await ctx.db.patch(existingMatch._id, matchWithSearch);
+                updatedCount++;
+            }
+        }
+
+        return { success: true, inserted: insertedCount, updated: updatedCount };
+    },
+});
+
 // Helper function to transform match to card format
 function transformToCard(match) {
     return {

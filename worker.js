@@ -30,6 +30,12 @@ const activeTrackers = new Map();
  */
 let lastScrapedMatchesData = null;
 
+/**
+ * In-memory cache for individual live match data to avoid tracker writes if no details have changed.
+ * Key: vlrId, Value: last scraped match details object
+ */
+const trackerCache = new Map();
+
 let client; // Convex client initialized once
 
 // =============================================================================
@@ -49,13 +55,24 @@ async function runTracker(vlrId, matchUrl) {
             return;
         }
 
+        // Avoid database write if match details haven't changed.
+        const cachedDetails = trackerCache.get(vlrId);
+        if (cachedDetails && _.isEqual(details, cachedDetails)) {
+            console.log(`[Tracker:${vlrId}] 💾 Cached data unchanged, skipping update.`);
+            return; // No changes detected, skip the update.
+        }
+
         const result = await client.mutation("matches:upsertMatch", {
             match: details,
             apiKey: CONVEX_API_KEY
         });
 
-        if (result.success && result.status === 'updated') {
-            console.log(`[Tracker:${vlrId}] ✅ Updated`);
+        if (result.success) {
+            // Update cache only after a successful database operation.
+            trackerCache.set(vlrId, _.cloneDeep(details));
+            if (result.status === 'updated') {
+                console.log(`[Tracker:${vlrId}] ✅ Updated`);
+            }
         }
 
         // If the match is no longer live, the scanner will eventually stop this tracker.
@@ -73,22 +90,27 @@ async function runTracker(vlrId, matchUrl) {
 // =============================================================================
 
 /**
- * Compares the current scraped matches data with the cached data using lodash isEqual.
- * Expects parsed match objects (not URLs) and assumes a stable order.
- * @param {Array} currentParsedMatches - The current parsed matches array
- * @returns {boolean} - True if data has changed, false if it's the same
+ * Compares the current scraped matches with the cached version and returns only
+ * the matches that are new or have changed.
+ * @param {Array} currentMatches - The current array of parsed match objects.
+ * @returns {Array} An array of match objects that are new or have been updated.
  */
-function hasMatchesDataChanged(currentParsedMatches) {
+function getChangedMatches(currentMatches) {
     if (!lastScrapedMatchesData) {
-        return true; // First run, data is considered "changed"
+        return currentMatches; // First run, all matches are considered new.
     }
 
-    try {
-        return !_.isEqual(currentParsedMatches, lastScrapedMatchesData);
-    } catch (error) {
-        console.error('[Scanner] ⚠️ Error comparing matches data:', error.message);
-        return true; // On error, assume data has changed to be safe
+    const changedMatches = [];
+    const oldMatchesMap = new Map(lastScrapedMatchesData.map(m => [m.vlrId, m]));
+
+    for (const currentMatch of currentMatches) {
+        const oldMatch = oldMatchesMap.get(currentMatch.vlrId);
+        if (!oldMatch || !_.isEqual(currentMatch, oldMatch)) {
+            changedMatches.push(currentMatch);
+        }
     }
+
+    return changedMatches;
 }
 
 /**
@@ -159,31 +181,16 @@ async function runScanner() {
 
         // 3. Stabilize ordering (to avoid order-only diffs) and compare with cache
         const sortedDetailedMatches = _.sortBy(detailedMatches, ['vlrId']);
-        if (!hasMatchesDataChanged(sortedDetailedMatches)) {
-            console.log(`[Scanner] ⏭️ No changes detected after parsing, skipping database operations.`);
-            // Still manage trackers even if no DB changes
-        } else {
-            // 4. Upsert only after detecting changes
-            let processedCount = 0;
-            for (const match of sortedDetailedMatches) {
-                try {
-                    const result = await client.mutation("matches:upsertMatch", {
-                        match,
-                        apiKey: CONVEX_API_KEY
-                    });
-                    if (result.success) {
-                        processedCount++;
-                    }
-                } catch (error) {
-                    console.error(`[Scanner] ❌ Error upserting match:`, error.message);
-                }
-            }
-            // 5. Update cache with current parsed data
-            updateCachedMatchesData(sortedDetailedMatches);
-            console.log(`[Scanner] 📊 Updated: ${processedCount}, Skipped: ${skippedCount}`);
+        const allChangedMatches = getChangedMatches(sortedDetailedMatches);
+
+        // Log cache comparison results
+        const totalMatches = sortedDetailedMatches.length;
+        const unchangedCount = totalMatches - allChangedMatches.length;
+        if (unchangedCount > 0) {
+            console.log(`[Scanner] 💾 ${unchangedCount}/${totalMatches} matches unchanged from cache, skipping updates.`);
         }
 
-        // 3. Manage Trackers based on live matches
+        // Manage Trackers based on live matches
         const liveVlrIds = new Set();
         for (const match of liveMatches) {
             liveVlrIds.add(match.vlrId);
@@ -198,16 +205,48 @@ async function runScanner() {
             }
         }
 
-        // 4. Stop any trackers for matches that are no longer live.
+        // Stop any trackers for matches that are no longer live.
         for (const [vlrId, intervalId] of activeTrackers.entries()) {
             if (!liveVlrIds.has(vlrId)) {
                 console.log(`[Scanner] 🛑 Match ${vlrId} is no longer live. Stopping tracker.`);
                 clearInterval(intervalId);
                 activeTrackers.delete(vlrId);
+                trackerCache.delete(vlrId);
             }
         }
         console.log(`[Scanner] 📈 Active trackers: ${activeTrackers.size}`);
 
+        // Filter out matches that are being handled by a tracker
+        const changedMatchesForScanner = allChangedMatches.filter(match => !activeTrackers.has(match.vlrId));
+
+        // Log how many matches are being handled by trackers vs scanner
+        const trackerHandledCount = allChangedMatches.length - changedMatchesForScanner.length;
+        if (trackerHandledCount > 0) {
+            console.log(`[Scanner] 🔄 ${trackerHandledCount} matches handled by active trackers, skipping scanner processing.`);
+        }
+
+        if (changedMatchesForScanner.length === 0) {
+            console.log(`[Scanner] 💾 All matches cached and unchanged, skipping database operations.`);
+        } else {
+            // 4. Upsert only the non-tracked, changed matches in a single batch operation
+            try {
+                const result = await client.mutation("matches:upsertMatchesBatch", {
+                    matches: changedMatchesForScanner,
+                    apiKey: CONVEX_API_KEY
+                });
+
+                if (result.success) {
+                    console.log(`[Scanner] 📦 Batch upserted ${changedMatchesForScanner.length} changes: ${result.inserted} inserted, ${result.updated} updated.`);
+                }
+            } catch (error) {
+                console.error(`[Scanner] ❌ Error in batch upserting matches:`, error.message);
+            }
+        }
+
+        // 5. Update cache with the complete current parsed data if anything changed.
+        if (allChangedMatches.length > 0) {
+            updateCachedMatchesData(sortedDetailedMatches);
+        }
     } catch (error) {
         console.error('[Scanner] ❌ Task failed:', error);
     }
