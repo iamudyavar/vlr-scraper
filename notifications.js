@@ -18,7 +18,7 @@ export async function sendNotification(title, message) {
     }
 
     if (!WEBHOOK_URL) {
-        console.warn('[Notification] ⚠️ NOTIFICATION_WEBHOOK_URL not set. Skipping notification.');
+        console.warn('[Notification] ⚠️ WEBHOOK_URL not set. Skipping notification.');
         return;
     }
 
