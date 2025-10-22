@@ -1,5 +1,6 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import { sendNotification } from './notifications.js';
 
 // =============================================================================
 // Main Exported Functions
@@ -130,6 +131,14 @@ async function fetchHtml(url) {
         return data;
     } catch (error) {
         console.error(`❌ Failed to fetch page at ${url}:`, error.message);
+
+        if (error.code === 'ECONNREFUSED') {
+            await sendNotification(
+                'VLR Scraper Connection Error',
+                `Failed to connect to ${url}. **Reason: ECONNREFUSED**. The site might be down or blocking the scraper.`
+            );
+        }
+
         throw error;
     }
 }
